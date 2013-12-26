@@ -1,4 +1,4 @@
-
+ 
 ; dasm newbies.asm -onewbies.bin -lnewbies.lst -snewbies.sym -f3
 ; makeawav -ts a.out
 
@@ -47,23 +47,146 @@ NUMG0	= tmp2		; pattern buffer temp -- number output (already uses temp)
 curplat ds 1		; which platform we are rendering or considering (increments by 4 each go)
 curline	ds 1		; which line of the platform 
 platstart ds 1		; first line of the platform; working backwards now from the last line.
-deltaz  ds 1		; difference between player and various objects, temps (can't use tmp1, tmp2 as these need to persist)
-deltay ds 1 
+deltaz  ds 1		; how far forward the current platform line is from the player
+deltay ds 1 		; how far above or below the current platform the player is
 deltayneg ds 1		; flag indicating the deltay is upwards from the middle of the screen, not downwards
-curlinewidth ds 1 
-curlineoffset ds 1 
+
+curlinewidth = tmp1	; temp; output of plathypot, fed into plotonscreen
+; using the S register for curlineoffset
 
 ; framebuffer
-view	ds [ $ff - 4 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fb, $fc, $fd and $fe for the 6502 stack XXX let's fix so we can do 2 bytes for the stack
+view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fb, $fc, $fd and $fe for the 6502 stack XXX let's fix so we can do 2 bytes for the stack
+
 
 ;
 ; constants
 ;
 
-viewsize	= [ $ff - 4 - view ]
+viewsize	= [ $ff - 2 - view ]
 		ECHO "viewsize: ", [viewsize]d
 
 flap_y		= %01111111;
+
+;
+; macros
+;
+
+;
+; arctan (formerly platlinedelta)
+;
+
+; index the arctan table with four bits of each delta
+; we use the most significant non-zero four bits of each delta
+; the arctan table is indexed by the ratio of the y and z deltas
+; this means we can scale the values up to get more precision as long as we scale them up together
+; we shift right up to four times until ( deltay | delta ) <= 0x0f
+; deltaz is in tmp1 and deltay is in tmp2 where they get shifted to the right
+; this also adds half of the screen height or subtracts from half screen height as appropriate to convert to scan line number
+
+		MAC arctan
+.platlinedelta
+		lda deltaz
+		sta tmp1
+		lda deltay
+		sta tmp2
+		ora tmp1				; combined bits so we only have to test one value to see if all bits are clear of the top nibble
+.platlinedeltaagain
+		cmp #$0F
+		bmi .platlinedeltadone	; 0F is larger, had to barrow, so we know that no high nibble bits are set
+		lsr
+		lsr tmp1
+		lsr tmp2
+		jmp .platlinedeltaagain
+.platlinedeltadone
+		lda tmp2				; table loops over $z then over $y, so $z is down and $y is across
+		asl						; tmp1 is our deltaz, tmp2 our deltay
+		asl						; so we make tmp1 our high nibble so it goes down and tmp2 our low nibble so it goes across
+		asl
+		asl
+        ora tmp1
+		; sta num0
+		tay
+		ldx deltayneg			; handle the separate cases of the platform above us and the platform below us
+		bne .platarctan1			; true value indicates platform is above us
+		lda arctangent,y		; false value (we wind up here) indicates platform is below us
+		clc
+		adc #(viewsize/2)		; if the platform were higher than us, we'd sbc here instead
+        jmp .platarctan2
+.platarctan1
+		lda #(viewsize/2)
+		sec
+		sbc arctangent,y
+.platarctan2
+		ENDM
+
+;
+; plathypot
+;
+
+; use a hypotonose table to estimate distance to a line so that we can assign it a width to represent size
+; projection: projected y = distance_of_"screen" * actual_y / distance_of_point
+; we're just using angle as a direct index to scanline number, but I think that's okay... 0..45 degrees
+; further away things move towards the middle of the screen, but atan(z/y) takes that into account
+
+; compute line size:
+; 1. zd,yd -> hypot table -> distance         (adding zd back into zd a fractional number of times depending on yd)
+; 2. distance -> perspective table -> size    (looking distance in a table to figure out line width)
+
+; #1 requires deltay to be less than 50, and we probably shouldn't be looking 50 paces ahead anyway
+; this is just a situation optimized, table driven, unrolled multiplication
+; it should probably be un-un-rolled a bit
+
+		MAC plathypot
+		ldy deltay
+		lda distancemods,y
+		sta tmp2				; top three bits indicate whether 1/4th of deltaz should be re-added to itself, then 1/8th, etc
+		lda deltaz
+		lsr
+		lsr
+		sta tmp1				; tmp1 contains the fractional (1/4 at first, then 1/8th, then 1/16th) value of deltaz
+		lda deltaz				; fresh copy to add fractional parts to
+		clc
+		asl tmp2
+		bcc .plathypot1
+		clc
+		adc tmp1				; 1/4
+.plathypot1
+		lsr tmp1				; half again
+		asl tmp2
+		bcc .plathypot2
+		clc
+		adc tmp1				; 1/8th
+.plathypot2
+		lsr tmp1				; half again
+		asl tmp2
+		bcc .plathypot3
+		clc
+		adc tmp1				; 1/16th
+.plathypot3
+		ENDM
+
+;
+; plotonscreen
+;
+
+; Y gets the distance, which we use to figure out which size of line to draw
+; X gets the scan line to draw at
+; this macro is used in three different places
+
+		MAC plotonscreen
+		lda view,x				; get the line width of what's there already
+		and #%00011111			; mask off the color part and any other data
+		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
+		bpl .plotonscreen3		; what we wanted to draw is smaller.  that means it's further away.  skip it.
+		lda perspectivetable,y
+		ldy curplat				; seek to the color (level0 contains records of:  start position, length, height, color)
+		iny
+		iny
+		iny
+		ora level0,y
+		sta view,x
+.plotonscreen3
+		ENDM
 
 ;
 ; ROM
@@ -72,6 +195,7 @@ flap_y		= %01111111;
         SEG PROGRAM_CODE 
 		ORG $f000
 
+		
 ;
 ; reset
 ;
@@ -249,7 +373,6 @@ scoredone
 
 		jsr readstick
 		jsr gamelogic
-		jsr marksweep   ; expire rendered lines from one render cycle ago
 		jsr platlevelclear		; start at the beginning; was platresume
 		sta WSYNC
 
@@ -258,7 +381,6 @@ scoredone
 		lda #34					; 29*76/64 = 34.4375, plus the WSYNC at the end
 		sta TIM64T
 		jsr platresume
-;		jsr vblanktimerendalmost ; XXXXX
 		sta WSYNC
 
 ; 3 scanlines of vsync signal
@@ -285,7 +407,6 @@ scoredone
 
 		lda #42					; 36*76/64 = 42.75, plus one for the WSYNC at the end
 		sta TIM64T
-		; jsr vblanktimerendalmost ; XXXXX experimental; was seeing how far it got with only 1 or 2 of the 3 calls
 		jsr platresume
 		lda #%01000000 ; turn VBLANK off and the joystick latch on; joystick triggers will now right read 1 until trigger is pressed, then it will stick as 0
 		sta VBLANK
@@ -313,27 +434,36 @@ scoredone
 ; platend   -- stores level0[curplat][start] + level0[curplat][length]
 ; deltay    -- how far the player is above/below the currently being drawn platform
 ; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform
+; using the S register now for curlineoffset
 
 platlevelclear					; hit end of the level:  clear out all incremental stuff and go to the zeroith platform
 		; start over rendering
-		; ldy #0
+		ldy #0
 		; sty num0	; XX counting how many platform lines we render
 		sty curline
 		sty curplat				; XXX don't reset to 0; create a variable for current platform player is on and use that instead
+
+		; zero out the framebuffer
+		ldy #viewsize-1
+		ldx #0
+platlevelclear2
+		stx view,y
+		dey
+		bne platlevelclear2
 		jmp platnext0
 		
-platresume						; execution falls through to here
-		lda curline			; where we in middle of a platform?  yeah?  seek to the visible part and draw it
-        beq platresume2
-        jmp platlineseek
-platresume2
+platresume
+		lda curline			; where we in middle of a platform?
+        ; bne platlineseek	; was doing this but going to plattryline is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX
+        bne plattryline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
+
 		ldy curplat				; offset into the level0 table
 platnext0
 		lda level0,y			; seek to next visible platform
 		; beq platlevelclear		; if 0:  nothing there; clear all of the incremental registers and start again, CPU willing  XXX experimental
 		; if 0: stop rending stuff and just go wait for the timer to go off
 		bne platnext00			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
-		jmp vblanktimerendalmost
+		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
 platnext00
 
 		iny
@@ -352,7 +482,7 @@ platnext						; seek to the next platform and take a look at doing it
 		; cmp #8
 		cmp #9
 		bpl platnext0
-		jmp vblanktimerendalmost
+		jmp vblanktimerendalmost	; not enough time left to start another platform
 
 platfound
 ; which platform are we on?
@@ -386,9 +516,9 @@ platfound1
 platlineseek
 		lda playerz				; seek until where the platform is in front of the player
 		clc
-		adc deltay				; in front by the same amount as it is down/up from us (45 degree viewing angle)
+		adc deltay				; in front by the same amount as it is down/up from us (45 degree viewing angle); this is just an optimizing to save having to do arctangent lookups etc
 platlineseek2
-		cmp curline				; this is just an optimizing to save having to do arctangent lookups etc
+		cmp curline				; 
 		bmi platlineseek3		; minus, curline is larger and thus visible; carry on, assuming we haven't gone past the platform
 		inc curline				; else try next line
 		jmp platlineseek2
@@ -413,26 +543,21 @@ plattryline
 		sec
 		sbc playerz
 		sta deltaz
-plattryline2					; end of this loop just inc's deltaz to save having to do that subtraction to get deltaz again
-		lda deltaz
-		sta tmp1
-		lda deltay
-		sta tmp2
-		jsr platlinedelta ; takes deltaz in tmp1 and deltay in tmp2, returns a scan line offset based on the ratio...?
-		sta curlineoffset ; save the position on the screen
+		arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+		tax
+		txs						; using the S register to store our value for curlineoffset
 
-		jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+		plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 		sta curlinewidth
 
 		tay						; Y gets the distance, which we use to figure out which size of line to draw
-		ldx curlineoffset		; X gets the scan line to draw at
-		jsr plotonscreen
+		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
+		plotonscreen			; jsr plotonscreen
 		; fall through to platnextline
 
 platnextline
 		; inc num0				; XX counting how many platform lines we evaluate in a frame
 		dec curline				; working backwards now... previous line on the same platform
-		dec deltaz
 
 		lda INTIM
 		; cmp #6					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
@@ -450,29 +575,18 @@ platclear
 platnotclear
 fatlines
 		ldy curlinewidth		; Y gets the distance, which we use to figure out which size of line to draw
-		ldx curlineoffset		; X gets the scan line to draw at
+		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 		lda deltayneg
 		bne fatlines2
 fatlines1				; we're drawing in the bottom half of the screen, so add
 		inx
-		jsr plotonscreen
+		plotonscreen			; jsr plotonscreen
 		jmp fatlines3
 fatlines2				; we're drawing in the top half of the screen, so subtract		
 		dex
-		jsr plotonscreen
+		plotonscreen			; jsr plotonscreen
 fatlines3
-		jmp plattryline2
-
-
-;
-;
-;
-
-;
-;
-; small subroutines
-;
-;
+		jmp plattryline
 
 ;
 ; timer
@@ -492,122 +606,15 @@ vblanktimerendalmost1
 vblanktimerendalmost2
 		lda tmp1
 ;		sta num0 ; XX diagnostics to figure out how much time is left on the timer when platresume gives up
+		ldx #$fd			; we use the S register as a temp so restore it to the good stack pointer value; we only ever call one level deep so we can hard code this
+		txs
 		rts
 
 ;
-; platlinedelta
 ;
-
-; index the arctan table with four bits of each delta
-; the arctan table is indexed by the ratio of the y and z deltas; this means we can scale the values up to get more
-; precision as long as both deltas have zeros in their top bits
-; deltaz is in tmp1 and deltay is in tmp2 where they get shifted to the right
-; this also adds half of the screen height or subtracts from half screen height as appropriate to convert to scan line number
-; XXX this is kind of a crappy stab at this... 
-
-platlinedelta
-		lda tmp2
-		ora deltaz				; combined bits so we only have to test one value to see if all bits are clear of the top nibble
-platlinedeltaagain
-		cmp #$0F
-		bmi platlinedeltadone	; 0F is larger, had to barrow, so we know that no high nibble bits are set
-		lsr
-		lsr tmp1
-		lsr tmp2
-		jmp platlinedeltaagain
-platlinedeltadone
-		lda tmp2				; table loops over $z then over $y, so $z is down and $y is across
-		asl						; tmp1 is our deltaz, tmp2 our deltay
-		asl						; so we make tmp1 our high nibble so it goes down and tmp2 our low nibble so it goes across
-		asl
-		asl
-        ora tmp1
-		; sta num0
-		tay
-		ldx deltayneg			; handle the seperate cases of the platform above us and the platform below us
-		bne platarctan1			; true value indicates platform is above us
-		lda arctangent,y		; false value (we wind up here) indicates platform is below us
-		clc
-		adc #(viewsize/2)		; XXX if the platform were higher than us, we'd sbc here instead
-		jmp platarctan2
-platarctan1
-		lda #(viewsize/2)
-		sec
-		sbc arctangent,y
-platarctan2
-		rts
-		
+; small subroutines
 ;
-; plathypot
 ;
-
-; use a hypotonose table to estimate distance to a line so that we can assign it a width to represent size
-; projection: projected y = distance_of_"screen" * actual_y / distance_of_point
-; we're just using angle as a direct index to scanline number, but I think that's okay... 0..45 degrees
-; further away things move towards the middle of the screen, but atan(z/y) takes that into account
-
-; compute line size:
-; 1. zd,yd -> hypot table -> distance         (adding zd back into zd a fractional number of times depending on yd)
-; 2. distance -> perspective table -> size    (looking distance in a table to figure out line width)
-
-; #1 requires deltay to be less than 50, and we probably shouldn't be looking 50 paces ahead anyway
-; this is just a situation optimized, table driven, unrolled multiplication
-; it should probably be un-un-rolled a bit
-
-plathypot
-		ldy deltay
-		lda distancemods,y
-		sta tmp2				; top three bits indicate whether 1/4th of deltaz should be re-added to itself, then 1/8th, etc
-		lda deltaz
-		lsr
-		lsr
-		sta tmp1				; tmp1 contains the fractional (1/4 at first, then 1/8th, then 1/16th) value of deltaz
-		lda deltaz				; fresh copy to add fractional parts to
-		clc
-		asl tmp2
-		bcc plathypot1
-		clc
-		adc tmp1				; 1/4
-plathypot1
-		lsr tmp1				; half again
-		asl tmp2
-		bcc plathypot2
-		clc
-		adc tmp1				; 1/8th
-plathypot2
-		lsr tmp1				; half again
-		asl tmp2
-		bcc plathypot3
-		clc
-		adc tmp1				; 1/16th
-plathypot3
-		rts
-
-;
-; plotonscreen
-;
-
-; Y gets the distance, which we use to figure out which size of line to draw
-; X gets the scan line to draw at
-
-plotonscreen
-		lda view,x				; get the line width of what's there already
-		and #%00011111			; mask off the color part (and the mark/sweep mark bit)
-		; XXXX if we're going to do mark-sweep, we need to ignore line width if the highbit is set
-		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
-		bpl plotonscreen3		; what we wanted to draw is smaller.  that means it's further away.  skip it.
-		lda perspectivetable,y
-
-		ldy curplat				; seek to the color
-		iny
-		iny
-		iny
-		ora level0,y
-		; ora platcolor
-
-		sta view,x
-plotonscreen3
-		rts						; inline now
 
 ;
 ; readstick
@@ -758,26 +765,6 @@ gamelogic7
 ;
 
 ; mark and sweep sweeps everything previously marked and then marks everything that's left so it will be swept on the next call
-
-marksweep
-		; mark everything already in the framebuffer
-		ldy #viewsize
-		ldx #0
-		dey						; pre-de-increment Y (the 100th scan line is number 99)
-marksweep2
-		lda view,y
-		bpl marksweep3			; high bit clear?  it was drawn this round.  branch and go set the bit.
-		stx view,y				; high bit set?  we set it the last time we were in here.  nuke the scanline.
-		dey
-		bne marksweep2
-		rts
-marksweep3
-		; lda view,y
-		ora #%10000000			; set the high bit
-		sta	view,y
-		dey
-		bne marksweep2
-		rts
 
 ;
 ;
