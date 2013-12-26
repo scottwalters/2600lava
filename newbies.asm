@@ -491,12 +491,7 @@ platnext						; seek to the next platform and take a look at doing it
 		iny
 		iny
 		sty curplat
-		lda INTIM
-		; cmp #8
-		cmp #9
-; XXXXX this leaves this uninitialized; don't do this
-		bpl platnext0
-		jmp vblanktimerendalmost	; not enough time left to start another platform
+		jmp platnext0
 
 platfound
 		; a platform was found that ends in front of us; initialize curline, deltay, deltaz and start doing lines from a platform
