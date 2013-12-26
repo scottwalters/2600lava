@@ -196,11 +196,8 @@ flap_y		= %01111111;
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
 		bpl .plotonscreen3		; what we wanted to draw is smaller.  that means it's further away.  skip it.
 		lda perspectivetable,y
-		ldy curplat				; seek to the color (level0 contains records of:  start position, length, height, color)
-		iny
-		iny
-		iny
-		ora level0,y
+		ldy curplat
+		ora level0+3,y			; add the platform color (level0 contains records of:  start position, length, height, color)
 		sta view,x
 .plotonscreen3
 		ENDM
@@ -458,7 +455,7 @@ platlevelclear					; hit end of the level:  clear out all incremental stuff and 
 		ldy #0
 		; sty num0	; XX counting how many platform lines we render
 		sty curline
-		sty curplat				; XXX don't reset to 0; create a variable for current platform player is on and use that instead
+		sty curplat
 
 		; zero out the framebuffer
 		ldy #viewsize-1
@@ -474,20 +471,19 @@ platresume
         ; bne platlineseek	; was doing this but going to plattryline is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX
         bne plattryline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
 
-		ldy curplat				; offset into the level0 table
 platnext0
-		lda level0,y			; seek to next visible platform
-		; beq platlevelclear		; if 0:  nothing there; clear all of the incremental registers and start again, CPU willing  XXX experimental
-		; if 0: stop rending stuff and just go wait for the timer to go off
+		; is there a current platform?  if not, go busy spin on the timer
+		ldy curplat				; offset into the level0 table
+		lda level0,y			; load the first byte, the Z start position, of the current platform
 		bne platnext00			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
 		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
 platnext00
-
-		iny
-		clc						; 
-		adc level0,y			; add the end of the platform, compare to that, since that's the interesting part
+		clc						; A contains the Z start position of the platform
+		adc level0+1,y			; add the length of the platform, since the end is the interesting part to test for to see if we can see any of this platform
 		cmp playerz				; compare to where the player is
 		bpl platfound			; playerz <= start-of-this-platform + end-of-this-platform, so show the platform
+		; otherwise, fall through to trying the next platform
+
 platnext						; seek to the next platform and take a look at doing it
 		ldy curplat
 		iny
@@ -498,22 +494,20 @@ platnext						; seek to the next platform and take a look at doing it
 		lda INTIM
 		; cmp #8
 		cmp #9
+; XXXXX this leaves this uninitialized; don't do this
 		bpl platnext0
 		jmp vblanktimerendalmost	; not enough time left to start another platform
 
 platfound
-; which platform are we on?
-		dey						; back to start of structure
+		; a platform was found that ends in front of us; initialize curline, deltay, deltaz and start doing lines from a platform
 		lda level0,y			; get platform start
 		sta curline				; that's our current line
-		iny						; to second byte, the platform size
 		clc
-		adc level0,y			; add the size of the platform
+		adc level0+1,y			; add the size of the platform
 		sta tmp1				; that's the end for curline
 		lda playery
 		sec
-		iny						; to third byte, the platform height
-		sbc level0,y
+		sbc level0+2,y			; subtract the 3rd byte, the platform height
 		sta deltay				; store the difference between the player and the platform
 
 platlineseek
@@ -1142,14 +1136,6 @@ NUMBERS
 
 
 ;
-; style notes
-;
-
-; could use the stack heavily, forth style, at three cycles for a push and four for a pull, versus two for txs/tsx
-
-; todo: use 0-page (xx),y more
-
-;
 ; render pipeline
 ;
 
@@ -1170,12 +1156,6 @@ NUMBERS
 ; input is ratio of distance ahead to distance above/below, that is $delta_y / $delta_z
 ; output is degrees
 ; how? angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
-; divide needs to divide a byte by another byte but give 16 bit output
-; or... it can pre compensate, and shift a few bits of the low byte into the high byte
-
-; 76 cycles per line, 37 vblank lines, for a meager 2812 cycles
-; after finding the first platform, seeking, and one divide, INTIM reads #$23 (35).  starts at #$2B (43).
-; update: after doing the first platform's first line with the z/y atan table, INTIM reads #$27.  better.
 
 ;
 ; todo/done
@@ -1187,25 +1167,5 @@ NUMBERS
 ; 16 each way, but we could ror the least significant bits off of the deltas and get a quick answer 
 ; as to where on the screen they go
 
-; todo: add clause for ignoring platforms *too* far away, or else let CPU be the limiting factor
-
 ; todo: pointer into the platform list representing where the player is standing (or was last standing if between platforms)
 
-; done: figure out how many frames it takes to draw in a screen, then every that many frames, actually read control and blank the screen
-
-; done: count generations (vblanks) and don't redraw everything more than once...
-
-; bug: why won't it render the one platform when there is only one platform in the level?
-
-; idea: store a "display list" type thing with instructions:  how many lines to repeat the same thing;
-; then color to change, width to change to, and width delta (+/- width with a small fractal part) each line.
-; this would allow double buffering, quicker rendering of the platforms (bresenham), etc.  since there's only
-; about three platforms on the screen right now, this would be a very short list.
-
-; idea:  joust...?  left/right turns you around, forward makes you run on a platform, button flaps, of course
-; or no turn-around initially, since that would require rendering the level from the opposite perspective
-
-; todo:
-; implement mark-sweep, where rather than clearing it all out each redraw, the color highbits get set
-; and if the color highbit is set during re-draw, overwrite that line?  then, after re-draw, blank things
-; that still have the highbit set?  that would allow for four colors of platforms still
