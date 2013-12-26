@@ -578,19 +578,19 @@ platclear
 		jmp platnext
 
 platnotclear
-fatlines
-		ldy curlinewidth		; Y gets the distance, which we use to figure out which size of line to draw
-		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
-		bit deltay				; playery - platform height is > 0 (positive) if platform is below us
-		bmi fatlines2			; branch if this line is in the top half of the screen (platform height > playery)
-fatlines1				; we're drawing in the bottom half of the screen, so add
-		inx
-		plotonscreen			; jsr plotonscreen
-		jmp fatlines3
-fatlines2				; we're drawing in the top half of the screen, so subtract		
-		dex
-		plotonscreen			; jsr plotonscreen
-fatlines3
+;fatlines
+;		ldy curlinewidth		; Y gets the distance, which we use to figure out which size of line to draw
+;		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
+;		bit deltay				; playery - platform height is > 0 (positive) if platform is below us
+;		bmi fatlines2			; branch if this line is in the top half of the screen (platform height > playery)
+;fatlines1				; we're drawing in the bottom half of the screen, so add
+;		inx
+;		plotonscreen			; jsr plotonscreen
+;		jmp fatlines3
+;fatlines2				; we're drawing in the top half of the screen, so subtract		
+;		dex
+;		plotonscreen			; jsr plotonscreen
+;fatlines3
 
 		jmp plattryline
 
