@@ -498,9 +498,11 @@ platfound
 		lda playery
 		sec
 		sbc level0,y
-		bne platfound0
-		jmp platnext			; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
-platfound0
+		; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
+		; XX disabling this work-around for now; doesn't seem to cause any problem to not have it; what exactly was the problem again?
+		; bne platfound0
+		; jmp platnext
+; platfound0
 		bpl platfound1			; 
 		lda level0,y			; get the absolute difference -- platform is higher than the player
 		sbc playery
