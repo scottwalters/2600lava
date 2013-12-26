@@ -49,7 +49,6 @@ curline	ds 1		; which line of the platform
 platstart ds 1		; first line of the platform; working backwards now from the last line.
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
-deltayneg ds 1		; flag indicating the deltay is upwards from the middle of the screen, not downwards
 
 curlinewidth = tmp1	; temp; output of plathypot, fed into plotonscreen
 ; using the S register for curlineoffset
@@ -72,6 +71,20 @@ flap_y		= %01111111;
 ;
 
 ;
+; _absolute
+;
+
+; takes a value in A, returns it in A
+
+		MAC _absolute
+		bpl .abs1
+		eor #$ff
+		clc
+		adc #$01
+.abs1
+		ENDM
+
+;
 ; arctan (formerly platlinedelta)
 ;
 
@@ -88,6 +101,7 @@ flap_y		= %01111111;
 		lda deltaz
 		sta tmp1
 		lda deltay
+		_absolute
 		sta tmp2
 		ora tmp1				; combined bits so we only have to test one value to see if all bits are clear of the top nibble
 .platlinedeltaagain
@@ -106,13 +120,14 @@ flap_y		= %01111111;
         ora tmp1
 		; sta num0
 		tay
-		ldx deltayneg			; handle the separate cases of the platform above us and the platform below us
-		bne .platarctan1			; true value indicates platform is above us
-		lda arctangent,y		; false value (we wind up here) indicates platform is below us
+		bit deltay ; handle the separate cases of the platform above us and the platform below us
+		bmi .platarctan1		; true value indicates platform is above us
+		lda arctangent,y		; platform is below us; add the arctangent value to the middle of the screen
 		clc
-		adc #(viewsize/2)		; if the platform were higher than us, we'd sbc here instead
+		adc #(viewsize/2)
         jmp .platarctan2
 .platarctan1
+		; platform is above us; subtract the arctangent value from the middle of the screen
 		lda #(viewsize/2)
 		sec
 		sbc arctangent,y
@@ -137,7 +152,9 @@ flap_y		= %01111111;
 ; it should probably be un-un-rolled a bit
 
 		MAC plathypot
-		ldy deltay
+		lda deltay
+		_absolute
+		tay
 		lda distancemods,y
 		sta tmp2				; top three bits indicate whether 1/4th of deltaz should be re-added to itself, then 1/8th, etc
 		lda deltaz
@@ -493,32 +510,18 @@ platfound
 		clc
 		adc level0,y			; add the size of the platform
 		sta tmp1				; that's the end for curline
-		iny						; to third byte, the platform height
-		ldx #0					; flag gets set to the true to indicate that the platform is in fact above us
 		lda playery
 		sec
+		iny						; to third byte, the platform height
 		sbc level0,y
-		; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
-		; XX disabling this work-around for now; doesn't seem to cause any problem to not have it; what exactly was the problem again?
-		; bne platfound0
-		; jmp platnext
-; platfound0
-		bpl platfound1			; 
-		lda level0,y			; get the absolute difference -- platform is higher than the player
-		sbc playery
-		inx
-platfound1 
-		sta deltay				; store absolute difference between the player and the platform
-		stx deltayneg			; true to indicate negative that deltay is a negative value
-        ; when we want the platform color in the future, we look it up again in the level0 each time starting from curplat
-		; iny						; to the fourth byte, platform color
-		; lda level0,y
-		; sta platcolor			; just remember this for now
+		sta deltay				; store the difference between the player and the platform
 
 platlineseek
-		lda playerz				; seek until where the platform is in front of the player
+		; seek until where the platform is in front of the player
+		lda deltay
+		_absolute
 		clc
-		adc deltay				; in front by the same amount as it is down/up from us (45 degree viewing angle); this is just an optimizing to save having to do arctangent lookups etc
+		adc playerz
 platlineseek2
 		cmp curline				; 
 		bmi platlineseek3		; minus, curline is larger and thus visible; carry on, assuming we haven't gone past the platform
@@ -578,8 +581,8 @@ platnotclear
 fatlines
 		ldy curlinewidth		; Y gets the distance, which we use to figure out which size of line to draw
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
-		lda deltayneg
-		bne fatlines2
+		bit deltay				; playery - platform height is > 0 (positive) if platform is below us
+		bmi fatlines2			; branch if this line is in the top half of the screen (platform height > playery)
 fatlines1				; we're drawing in the bottom half of the screen, so add
 		inx
 		plotonscreen			; jsr plotonscreen
@@ -588,6 +591,7 @@ fatlines2				; we're drawing in the top half of the screen, so subtract
 		dex
 		plotonscreen			; jsr plotonscreen
 fatlines3
+
 		jmp plattryline
 
 ;
@@ -963,8 +967,6 @@ perspectivetable
 
 		; computer generated one
 		 dc.b 20, 20, 20, 20, 20, 20, 20, 20, 17, 16, 14, 13, 12, 11, 10, 10, 9, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
-		; my tweaked one which doesn't seem to work as well anyway
-		; dc.b 20, 20, 20, 17, 16, 14, 13, 12, 11, 10, 10, 9, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
 
 
 level0
@@ -981,7 +983,6 @@ colors
 
  		dc.b %11111110,  %01011100, %01101100, %10111000
  		dc.b %11111110,  %01011100, %01101100, %10111000		; repeat because highbit gets used as color index but is really a flag!
- 		; dc.b %10111000,  %11011000, %10101000, %11100000		; repeat because highbit gets used as color index but is really a flag!
 
 ; %0000... is white/grey/black
 ; %1000... is blue
@@ -990,10 +991,6 @@ colors
 ; %1110... golden
 ; %1111... organge
 
-
-;
-; index is scan line number, value is the angle (less than equal) observed
-;
 
 ;
 ;
