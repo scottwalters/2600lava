@@ -2,24 +2,6 @@
 ; dasm newbies.asm -onewbies.bin -lnewbies.lst -snewbies.sym -f3
 ; makeawav -ts a.out
 
-; todo next: sprites.  nice thing about first person is we don't need to draw ourselves!  so we can realistically have
-; two enemy birds flying around.  enemy birds are going need x, y, and at least one velocity.
-; clipping will be a bitch!
-; near/in gamelogic, make the enemy bird fly
-; compute distance with the current deltay, deltaz vars and arctan table
-; peek into the framebuffer and see if there is something nearer than them
-; modify the inner loop to show a damn sprite or two... vary the colors, width, and graphics... good luck!
-
-; todo: land on platforms, bounce off of platforms when going up.  the flap and gravity routines need to look through
-; the list of platforms (ugh).  no, we just need to remember the position of the platform we're above/below.  there's already a note to do that.
-
-; todo: game logic is very rough. besides floating down, we also seem to float back to the start of the level!
-
-; todo: give the player a point every time they kill a bird!
-
-; todo: waves.  when the birds are dead, pause a moment, and create more!
-
-
 		processor 6502
 		include "vcs.h"
 
@@ -46,12 +28,12 @@ NUMG0	= tmp2		; pattern buffer temp -- number output (already uses temp)
 ; these must be persistent between calls to platresume so the routine can pause and resume
 curplat ds 1		; which platform we are rendering or considering (increments by 4 each go)
 curline	ds 1		; which line of the platform we're currently rendering
-platstart ds 1		; first visible line of the platform; we work backwards from the end of the platform to here
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
 
 curlinewidth = tmp1	; temp; output of plathypot, fed into plotonscreen
 ; using the S register for curlineoffset
+; platstart ds 1		; first visible line of the platform; we work backwards from the end of the platform to here
 
 ; framebuffer
 view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fb, $fc, $fd and $fe for the 6502 stack XXX let's fix so we can do 2 bytes for the stack
@@ -494,47 +476,22 @@ platnext						; seek to the next platform and take a look at doing it
 
 platfound
 		; a platform was found that ends in front of us; initialize curline, deltay, deltaz and start doing lines from a platform
-		lda level0,y			; get platform start
+		lda level0+1,y			; get platform end
 		sta curline				; that's our current line
-		lda level0+1,y			; get the end point of the platform
-		sta tmp1				; that's the end for curline XXX redundant; try to get rid of this
+		sec
+		sbc playerz
+		sta deltaz				; end of the platform - playerz is deltaz
 		lda playery
 		sec
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		sta deltay				; store the difference between the player and the platform
-
-platlineseek
-		; seek until where the platform is in front of the player
-		lda deltay
-		_absolute
-		clc
-		adc playerz				; the platform is within our 45 degrees of view if it is as far ahead of us as we are above/below it
-platlineseek2
-		cmp curline				; 
-		bmi platlineseek3		; minus, curline is larger and thus visible; carry on, assuming we haven't gone past the platform
-		inc curline				; else try next line
-		jmp platlineseek2
-platlineseek3
-		lda tmp1				; found visible range, now make sure we haven't seeked past the end of the platform; tmp1 is our new platend
-		cmp curline
-		bpl platlineseek4		; current line is less than or equal to the platform end; continue rendering the platform from this point
-		jmp platclear			; negative, so current line is beyond the end of the platform
-platlineseek4					; there's still platform left, fall through
+		sta deltay				; deltay is the difference between the player and the platform, signed
 
 ; work backwards from the last visible line; this way, we can double-plot lines and wider lines, drawn later, will overwrite
 ; the narrower lines, drawn earlier
 ; this approach limits us to drawing two lines and not drawing an additional line on the last line plotted
-
-		lda curline
-		sta platstart			; platstart is first visible line XXXXXXXXXXX kill
-		lda tmp1				; tmp1 is our platend
-		sta curline				; platend becomes our curline
+; XXX not doing this at the moment
 
 plattryline
-		lda curline
-		sec
-		sbc playerz
-		sta deltaz
 		arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
 		tax
 		txs						; using the S register to store our value for curlineoffset
@@ -549,7 +506,8 @@ plattryline
 
 platnextline
 		; inc num0				; XX counting how many platform lines we evaluate in a frame
-		dec curline				; working backwards now... previous line on the same platform
+		dec curline				; working backwards from the end
+		dec deltaz				; deltaz goes down too XXXX these variables are really redundant
 
 		lda INTIM
 		; cmp #6					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
@@ -557,10 +515,10 @@ platnextline
 		bmi vblanktimerendalmost
 
 		lda curline
-		cmp platstart 			; curline-platstart < 0, bail
-		bpl platnotclear
+		cmp level0,0			; if curline is less than platstart, we've finished rendering this platform and we can bail
+		bpl platnotclear		; branch to continue rendering if we haven't walked past the start of the platform yet
 platclear
-		lda #0					; we're clear of this platform:  clear out some incremental stuff and go on to the next platform
+		lda #0					; we're clear of this platform:  clear out some incremental stuff and go on to the next platform XXX don't think zeroing out curline is necessary
 		sta curline
 		jmp platnext
 
