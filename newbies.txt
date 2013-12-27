@@ -1,0 +1,229 @@
+o. let's turn this into a sort of freerunning first person platformer
+
+x. get rid of all of these jsrs to save memory
+
+x. rework so that the level0 data structure includes platstart and platend rather than platstart and platlength; simplifies logic/temp usage a bit
+
+x. try to get rid of deltayneg and instead do 2's compliment like god intended?
+   ... playery - platform height ... > 0 = platform is below us, < 0 = platform is above us
+   ... previously, if the platform was higher than the player, we redid the math and did platform height - playery
+   ... routines using deltay
+       ... arctan
+       ... plathypot
+       ... platlineseek, to figure out if a line is as far ahead of us as it is above/below us to compute a 45 degree viewing angle
+       ... fatlines
+
+x. in platnext:
+; this leaves this uninitialized; don't do this
+;        lda INTIM
+        ; cmp #8
+;       cmp #9
+;       bpl platnext0
+;       jmp vblanktimerendalmost    ; not enough time left to start another platform
+        jmp platnext0
+
+.. in platlevelclear:          sty curplat             ; XXX don't reset to 0; create a variable for current platform player is on and use that instead
+   ... not sure about that.  don't want to create a new variable, and skipping past stuff we can't see should be pretty quick or we can make it quicker.
+
+x. try to get rid of curlineoffset?
+   ... plathypot is called right after it is computed, and that uses tmp1 and tmp2
+       ... keep in the stack pointer register?
+           ... yup, totally worked
+
+x.         iny                     ; move to the platform length <-- this is silly
+    do this instead:   lda level0+1,y
+
+x. platlinedelta can be in-lined; only used one place
+   ... did it with a macro
+
+x. attempts to make deltaz an alias to tmp1 have failed; not sure why that won't work; a lot of these vars look like they can be cut down
+   aha... plathypot makes heavy use of deltaz, deltay, tmp1 and tmp2; mucking that all up
+
+x. platresume is called from three places; are we over-running the timer in any of them?
+    when the time is less than $30 ($30 * 64 CPU cycles), we stop doing lines
+    $11, $b5
+    $16
+    $00, $16, $90 (probably an overflow), $b9 (probably an overflow; called from where #$2a = 42 is stuck in TIM64T)
+    $12 when TIM64T is loaded with $5F
+    $14 when TIM64T is loaded with $22 ($22 is less than platresume_timer_ticks_need, which is $30)
+    $B5 when TIM64T is loaded with $2A ($2A is less than platresume_timer_ticks_need)
+    $06 when TIM64T is loaded with $5F
+    $14 when loaded with $22
+    $B5 when loaded with $2A (probably overflowed) ... watch it overflow?
+    $11 when loaded with $5F
+    ... okay, loaded with #$22, tracing...
+        ... $20 ticks left on the timer by the time we hit platfound
+        ... it does a line before checking what's left in the timer
+        ... $1F at platlineseek
+        ... $1E at platlinedelta
+        ... $1D at plathypot
+        ... $1C at plotonscreen
+        ... $1B at platnextline
+        ... fatlines
+        ... oops, by platnextline a few times as the thing continues to wind down; platnextline is where INTIM is checked and compared to hard-coded #6
+        ... platnext also compares INTIM to #8
+        ... platlevelclear compares INTIM to platresume_timer_ticks_need which is currently 48 (!!)
+        ... so it looks like maybe we can only check in platnextline and be okay
+            ... nope
+            ... still, platresume_timer_ticks_need is stupid.  that's the time we think it takes to render all platforms.  doesn't fit with large/varied levels.
+    ... okay, got rid of platresume_timer_ticks_need and it now only exits at platnext or platnextline on very small remaining timer values. 
+        ... platresume_timer_ticks_need was really only useful because it kept it from marksweeping and restarting when it didn't have time to finish
+            ... and that avoided flicker from doing multiple restarts and marksweeps in the same frame with the second not finishing
+    ... had to rework; marksweep is called once at the end of the frame rather than every time it hits the end of the level; that works right now but isn't 100%;
+        ... if it takes more than two frames to draw the screen, stuff will be prematured deleted
+        ... marksweep should only be done at the end of the frame if the thing has since rendered all of the platforms start to end
+        ... vblanktimerendalmost counts how many loops it has to do before the timer runs down to zero; with the hard coded values plugged in now, it's between 9-24
+
+x. why the hell do we jsr gamelogic in platlevelclear2?
+  ... apparently just because that's the point where it's kind of done with things in there
+  ... fixed
+
+x. testing making no calls to platresume and that seems to be working pretty well; maybe I should do an experiment and have it count how many lines it does
+    $0e or so.  not many.  okay, $14 with the first jsr platresume after the jsr platlevelclear enabled.  same ($14) with the 3rd platresume enabled.
+
+x. in platrumes, don't iterate until the end of all of the platforms but instead do a fixed number of platforms or work for a fixed number of frames
+   ... to better accomodate large levels and wrap-around
+   ... maybe no wrap-around for a platformer
+   ... okay, it only goes to the end now and doesn't attempt to restart until explicitly told to
+
+x. marksweep should only be done at the end of the frame if the thing has since rendered all of the platforms start to end
+   ... otherwise, if it takes more than two frames to draw all of the platforms, stuff will be premature deleted
+   ... or else just clamp down how much data we render (eg, only 100 lines of data) and then stop and call it good; yeah, even better
+       ... looks like we have *plenty* of time right now to redraw platforms completely for the frame
+           ... but the platform draw logic should also draw enemies
+       ... getting rid of mark sweep would free up that bit
+           ... that bit could potentially be useful for marking up sprite data
+
+old comments:
+; after finding the first platform, seeking, and one divide, INTIM reads #$23 (35).  starts at #$2B (43).
+; update: after doing the first platform's first line with the z/y atan table, INTIM reads #$27.  better.
+; 76 cycles per line, 37 vblank lines, for a meager 2812 cycles
+
+done:
+; todo: add clause for ignoring platforms *too* far away, or else let CPU be the limiting factor
+... cpu is the limiting factor
+
+; done: figure out how many frames it takes to draw in a screen, then every that many frames, actually read control and blank the screen
+
+; done: count generations (vblanks) and don't redraw everything more than once...
+
+; idea: store a "display list" type thing with instructions:  how many lines to repeat the same thing;
+; then color to change, width to change to, and width delta (+/- width with a small fractal part) each line.
+; this would allow double buffering, quicker rendering of the platforms (bresenham), etc.  since there's only
+; about three platforms on the screen right now, this would be a very short list.
+
+; idea:  joust...?  left/right turns you around, forward makes you run on a platform, button flaps, of course
+; or no turn-around initially, since that would require rendering the level from the opposite perspective
+
+.............
+
+toggle debugger mode in stella is `
+enter options menu mode is TAB
+enter ROM launcher is escape
+quit is control-q
+
+......
+
+76 (228/3) CPU clock cycles per scan line
+3 lines of vsync, 37 lines of vblank, 30 lines of overscan = 70 lines * 76 CPU cycles = 5,320 game logic cycles
+in this order: vertical sync, 192 lines of actual picture, then overscan
+there are 22.6 cpu cycles each line after hsync and before the actual picture area
+
+..........
+
+there are viewsize lines (currently 101)
+102 is score display setup
+103-111 in score display itself
+112 in score display teardown
+
+...........
+
+maybe should have kept with X/Y rather than Y/Z
+
+................
+
+; todo next: sprites.  nice thing about first person is we don't need to draw ourselves!  so we can realistically have
+; two enemy birds flying around.  enemy birds are going need x, y, and at least one velocity.
+; clipping will be a bitch!
+; near/in gamelogic, make the enemy bird fly
+; compute distance with the current deltay, deltaz vars and arctan table
+; peek into the framebuffer and see if there is something nearer than them
+; modify the inner loop to show a damn sprite or two... vary the colors, width, and graphics... good luck!
+
+; todo: land on platforms, bounce off of platforms when going up.  the flap and gravity routines need to look through
+; the list of platforms (ugh).  no, we just need to remember the position of the platform we're above/below.  there's already a note to do that.
+
+; todo: game logic is very rough. besides floating down, we also seem to float back to the start of the level!
+
+; todo: give the player a point every time they kill a bird!
+
+; todo: waves.  when the birds are dead, pause a moment, and create more!
+
+o. bug: why won't it render the one platform when there is only one platform in the level?
+   ... is it rendering all of the platforms right now?  haven't taken a close look at this
+
+o. DCP Plus demo shows how to use the Pitfall 2 custom hardware (supported by Stella, Harmony, and Melody) which has fast fetchers and overrides lda #xx! awesome!
+    o. too bad it doesn't override sta instead =P
+
+o. replace this code for disabling sprites with something that shows a sprite or two:
+        sta PF0
+        sta PF1
+        sta PF2
+        lda #%00001110
+        sta COLUPF
+    ... should be easy to decide whether to hide/show a scanline of player data; compare the Z position of the player to the width (distance) of the platform piece
+
+o.         jmp platnext            ; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
+         ^--- fix this somehow; maybe treat the platform as if it is 1 lower than us while we're exactly on it
+
+o. get rid of marksweep in favor of just blanking at the start of the frame and redrawing
+
+o. re-working the vblank logic, I broke joystick button latching (which is part of the vblank enable register)
+   ... need to re-read how this is supposed to work
+   ... okay, writing a 1 to D6 of VBLANK enables latching; once enabled (or reset by turning off then on), INPT4 and 5 are high but go low and stay low on fire
+
+lda playerzspeed        ; this is 1.4.3 fixed place
+  ^--- make not 1.4.3 and I don't think it is anyway
+
+o. physics is kinda fucked; revisit
+   ... playeryspeed is not handled comprehensively
+   ... handle as 2s compliment
+   ... check carry/zero in gamelogic to enforce floor/ceiling
+
+o. bcs gamelogic2      ; don't write back to playerz if this addition would take it above $ff XXXX actually, wouldn't this be the win condition for the level?
+
+o. beq gamelogic4      ; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
+
+o. readstick isn't currently keeping Y from going below 0 and that trashes things as soon as it goes below 0
+    ... kinda in the process of reworking readstick and gamelogic
+    ... playery higher than $2c or so also keeps it from redrawing even if we go back down
+        ... huh, jsr'ing to platlevelclear instead of platresume in the first of three calls makes it able to recover
+
+o. the TIM32 timings are quite probably off by one or so
+
+o. make the arctan table two pages long instead of one for more precision?
+
+o. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
+   interpolate between them
+
+o. rather than doing jsr/rts, just use one memory location as an index into a jump table of where to return to
+
+o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
+
+o. try to get rid of curlinewidth?
+   ... easily done; saved once, loaded once, with no tmp destructive routines in between
+   ... oops, mostly did this with abusing the S register but didn't quite finish it; trying to take it out entirely made things glitch
+
+o. really not convinced we're getting 111 lines of display; is the 45 degree angle check to blame?  what is the real range of the hypot table?
+   ... go through this rendering logic again
+   ... angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
+
+o. get rid of the platstart variable
+   ... we can get rid of platstart if we skip the optimization where we figure out which line of the platform is the first one we can see
+       ... I don't think this will hurt us too much
+       ... then we'll just be working from level0,1 backwards to level0,0
+   ... curline starts at level0,1 and goes towards level0,0
+   ... we stop using tmp1 which was platend, which was actually the platstart, which is level0,0
+
+o. curline and deltaz are probably redundant with each other as well and one could be eliminated
+   ... probably eliminate curline since a lot of routines use deltaz directly and its more immediately useful
