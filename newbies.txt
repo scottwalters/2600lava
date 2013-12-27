@@ -1,5 +1,18 @@
 o. let's turn this into a sort of freerunning first person platformer
 
+x. get rid of the platstart variable
+   ... we can get rid of platstart if we skip the optimization where we figure out which line of the platform is the first one we can see
+       ... I don't think this will hurt us too much
+       ... then we'll just be working from level0,1 backwards to level0,0
+   ... curline starts at level0,1 and goes towards level0,0
+   ... we stop using tmp1 which was platend, which was actually the platstart, which is level0,0
+   ... okay, now curline just moves straight from level0,1 to level0,0
+
+x. try to get rid of curlinewidth?
+   ... easily done; saved once, loaded once, with no tmp destructive routines in between
+   ... oops, mostly did this with abusing the S register but didn't quite finish it; trying to take it out entirely made things glitch
+   ... okay, except for the fatlines logic that's commented out, this is done
+
 x. get rid of all of these jsrs to save memory
 
 x. rework so that the level0 data structure includes platstart and platend rather than platstart and platlength; simplifies logic/temp usage a bit
@@ -210,20 +223,10 @@ o. rather than doing jsr/rts, just use one memory location as an index into a ju
 
 o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
-o. try to get rid of curlinewidth?
-   ... easily done; saved once, loaded once, with no tmp destructive routines in between
-   ... oops, mostly did this with abusing the S register but didn't quite finish it; trying to take it out entirely made things glitch
-
 o. really not convinced we're getting 111 lines of display; is the 45 degree angle check to blame?  what is the real range of the hypot table?
    ... go through this rendering logic again
    ... angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
-
-o. get rid of the platstart variable
-   ... we can get rid of platstart if we skip the optimization where we figure out which line of the platform is the first one we can see
-       ... I don't think this will hurt us too much
-       ... then we'll just be working from level0,1 backwards to level0,0
-   ... curline starts at level0,1 and goes towards level0,0
-   ... we stop using tmp1 which was platend, which was actually the platstart, which is level0,0
+       ... yeah, that 45 degree check, or some related logic, was screwing us up there; still want to go through all of the rendering math and check things
 
 o. curline and deltaz are probably redundant with each other as well and one could be eliminated
    ... probably eliminate curline since a lot of routines use deltaz directly and its more immediately useful
