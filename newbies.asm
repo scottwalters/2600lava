@@ -27,7 +27,6 @@ NUMG0	= tmp2		; pattern buffer temp -- number output (already uses temp)
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
 curplat ds 1		; which platform we are rendering or considering (increments by 4 each go)
-curline	ds 1		; which line of the platform we're currently rendering
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
 
@@ -424,17 +423,16 @@ scoredone
 ; at the same point when next invoked
 ; variables:
 ; curplat   -- which platform we're considering drawing or currently drawing (should be a multiple of 4)
-; curline   -- iterates from level0[curplat][start] to level0[curplat][start] + level0[curplat][length]
 ; platend   -- stores level0[curplat][start] + level0[curplat][length]
 ; deltay    -- how far the player is above/below the currently being drawn platform
-; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform
+; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform -- counts down from level0[curplat][end]-playerz to level0[curplat][end]-playerz (which is 0)
 ; using the S register now for curlineoffset
 
 platlevelclear					; hit end of the level:  clear out all incremental stuff and go to the zeroith platform
 		; start over rendering
 		ldy #0
 		; sty num0	; XX counting how many platform lines we render
-		sty curline
+		sty deltaz
 		sty curplat
 
 		; zero out the framebuffer
@@ -473,12 +471,11 @@ platnext						; seek to the next platform and take a look at doing it
 		jmp platnext0
 
 platfound
-		; a platform was found that ends in front of us; initialize curline, deltay, deltaz and start doing lines from a platform
+		; a platform was found that ends in front of us; initialize deltay, deltaz and start doing lines from a platform
 		lda level0+1,y			; get platform end
-		sta curline				; that's our current line
 		sec
 		sbc playerz
-		sta deltaz				; end of the platform - playerz is deltaz
+		sta deltaz				; end of the platform minus playerz is deltaz
 		lda playery
 		sec
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
@@ -503,21 +500,15 @@ plattryline
 		; fall through to platnextline
 
 platnextline
-		; inc num0				; XX counting how many platform lines we evaluate in a frame
-		dec curline				; working backwards from the end
-		dec deltaz				; deltaz goes down too XXXX these variables are really redundant
-
 		lda INTIM
 		; cmp #6					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
 		cmp #7					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
 		bmi vblanktimerendalmost
 
-		lda curline
-		cmp level0,0			; if curline is less than the start of the platform, we've finished rendering this platform and we can bail
-		bpl platnotclear		; branch to continue rendering if we haven't walked past the start of the platform yet
-platclear
-		lda #0					; we're clear of this platform:  clear out some incremental stuff and go on to the next platform XXX don't think zeroing out curline is necessary
-		sta curline
+		; inc num0				; XX counting how many platform lines we evaluate in a frame
+		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line XX
+		bit deltaz
+		bpl platnotclear		; branch to continue rendering if we haven't walked backwards past the players position
 		jmp platnext
 
 platnotclear
