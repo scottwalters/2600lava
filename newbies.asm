@@ -12,8 +12,8 @@ playerz ds 1		; how far in to the maze
 playery	ds 1		; how close to splatting
 playerzlo ds 1		; fractal part of their position
 playerylo ds 1 
-playeryspeed ds 1  ; 1.4.3 format -- sign, whole, fractional parts
-playerzspeed ds 1  ; 1.4.3 format -- sign, whole, fractional parts
+playeryspeed ds 1  ; signed Y momentum
+playerzspeed ds 1  ; signed Z momentum
 
 ; numeric output
 num0    ds 1		; number to output, left
@@ -30,10 +30,8 @@ curplat ds 1		; which platform we are rendering or considering (increments by 4 
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
 
-; using the S register for curlineoffset
-
 ; framebuffer
-view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fb, $fc, $fd and $fe for the 6502 stack XXX let's fix so we can do 2 bytes for the stack
+view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
 
 
 ;
@@ -446,8 +444,8 @@ platlevelclear2
 		
 platresume
 		lda curplat			; where we in middle of a platform (other than the 0th one)?
-        ; bne platlineseek	; was doing this but going to plattryline is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX and now platlineseek doesn't exist any more, but this note about "hey, the engine is a bit fucked up" might be useful
-        bne plattryline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
+        ; bne platlineseek	; was doing this but going to platrenderline (formerly plattryline) is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX and now platlineseek doesn't exist any more, but this note about "hey, the engine is a bit fucked up" might be useful
+        bne platrenderline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
 
 platnext0
 		; is there a current platform?  if not, go busy spin on the timer
@@ -486,7 +484,7 @@ platfound
 ; this approach limits us to drawing two lines and not drawing an additional line on the last line plotted
 ; XXX not doing this at the moment
 
-plattryline
+platrenderline
 		arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
 		tax
 		txs						; using the S register to store our value for curlineoffset
@@ -526,7 +524,7 @@ platnotclear
 ;		plotonscreen			; jsr plotonscreen
 ;fatlines3
 
-		jmp plattryline
+		jmp platrenderline
 
 ;
 ; timer
