@@ -45,8 +45,8 @@ NUMG0	= tmp2		; pattern buffer temp -- number output (already uses temp)
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
 curplat ds 1		; which platform we are rendering or considering (increments by 4 each go)
-curline	ds 1		; which line of the platform 
-platstart ds 1		; first line of the platform; working backwards now from the last line.
+curline	ds 1		; which line of the platform we're currently rendering
+platstart ds 1		; first visible line of the platform; we work backwards from the end of the platform to here
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
 
@@ -478,8 +478,7 @@ platnext0
 		bne platnext00			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
 		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
 platnext00
-		clc						; A contains the Z start position of the platform
-		adc level0+1,y			; add the length of the platform, since the end is the interesting part to test for to see if we can see any of this platform
+		lda level0+1,y			; get the end point of the platform, since the end is the interesting part to test for to see if we can see any of this platform
 		cmp playerz				; compare to where the player is
 		bpl platfound			; playerz <= start-of-this-platform + end-of-this-platform, so show the platform
 		; otherwise, fall through to trying the next platform
@@ -497,9 +496,8 @@ platfound
 		; a platform was found that ends in front of us; initialize curline, deltay, deltaz and start doing lines from a platform
 		lda level0,y			; get platform start
 		sta curline				; that's our current line
-		clc
-		adc level0+1,y			; add the size of the platform
-		sta tmp1				; that's the end for curline
+		lda level0+1,y			; get the end point of the platform
+		sta tmp1				; that's the end for curline XXX redundant; try to get rid of this
 		lda playery
 		sec
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
@@ -510,7 +508,7 @@ platlineseek
 		lda deltay
 		_absolute
 		clc
-		adc playerz
+		adc playerz				; the platform is within our 45 degrees of view if it is as far ahead of us as we are above/below it
 platlineseek2
 		cmp curline				; 
 		bmi platlineseek3		; minus, curline is larger and thus visible; carry on, assuming we haven't gone past the platform
@@ -519,8 +517,8 @@ platlineseek2
 platlineseek3
 		lda tmp1				; found visible range, now make sure we haven't seeked past the end of the platform; tmp1 is our new platend
 		cmp curline
-		bpl platlineseek4		; current line is less than or equal to the platform end
-		jmp platclear			; barrow, so current line is beyond the end of the platform
+		bpl platlineseek4		; current line is less than or equal to the platform end; continue rendering the platform from this point
+		jmp platclear			; negative, so current line is beyond the end of the platform
 platlineseek4					; there's still platform left, fall through
 
 ; work backwards from the last visible line; this way, we can double-plot lines and wider lines, drawn later, will overwrite
@@ -528,7 +526,7 @@ platlineseek4					; there's still platform left, fall through
 ; this approach limits us to drawing two lines and not drawing an additional line on the last line plotted
 
 		lda curline
-		sta platstart			; platstart is first visible line
+		sta platstart			; platstart is first visible line XXXXXXXXXXX kill
 		lda tmp1				; tmp1 is our platend
 		sta curline				; platend becomes our curline
 
@@ -959,12 +957,12 @@ perspectivetable
 
 
 level0
-        ; platform start point in the level, length of the platform, height of the platform, color (index into the colors table shifted left five bits)
+        ; platform start point in the level, platform end point, height of the platform, color (index into the colors table shifted left five bits)
         ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
-		dc.b 1, 10, $1e,  %00100000
-		dc.b 20, 10, $14, %01000000
-       dc.b 30, 10, $18,  %01100000
-;		dc.b 15, 10, $19, %01100000
+		dc.b 1, 11, $1e,  %00100000
+		dc.b 20, 20, $14, %01000000
+       dc.b 30, 40, $18,  %01100000
+;		dc.b 15, 25, $19, %01100000
 		dc.b 0, 0, 0, 0 		;       end
 		dc.b 0, 0, 0, 0 		;       end
 
