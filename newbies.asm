@@ -31,9 +31,7 @@ curline	ds 1		; which line of the platform we're currently rendering
 deltaz  ds 1		; how far forward the current platform line is from the player
 deltay ds 1 		; how far above or below the current platform the player is
 
-curlinewidth = tmp1	; temp; output of plathypot, fed into plotonscreen
 ; using the S register for curlineoffset
-; platstart ds 1		; first visible line of the platform; we work backwards from the end of the platform to here
 
 ; framebuffer
 view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fb, $fc, $fd and $fe for the 6502 stack XXX let's fix so we can do 2 bytes for the stack
@@ -497,10 +495,10 @@ plattryline
 		txs						; using the S register to store our value for curlineoffset
 
 		plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
-		sta curlinewidth
 
-		tay						; Y gets the distance, which we use to figure out which size of line to draw
+		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
+
 		plotonscreen			; jsr plotonscreen
 		; fall through to platnextline
 
