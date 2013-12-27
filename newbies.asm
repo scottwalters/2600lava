@@ -447,20 +447,20 @@ platlevelclear2
 		jmp platnext0
 		
 platresume
-		lda curline			; where we in middle of a platform?
-        ; bne platlineseek	; was doing this but going to plattryline is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX
+		lda curplat			; where we in middle of a platform (other than the 0th one)?
+        ; bne platlineseek	; was doing this but going to plattryline is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX and now platlineseek doesn't exist any more, but this note about "hey, the engine is a bit fucked up" might be useful
         bne plattryline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
 
 platnext0
 		; is there a current platform?  if not, go busy spin on the timer
 		ldy curplat				; offset into the level0 table
 		lda level0,y			; load the first byte, the Z start position, of the current platform
-		bne platnext00			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
+		bne platnext1			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
 		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
-platnext00
+platnext1
 		lda level0+1,y			; get the end point of the platform, since the end is the interesting part to test for to see if we can see any of this platform
 		cmp playerz				; compare to where the player is
-		bpl platfound			; playerz <= start-of-this-platform + end-of-this-platform, so show the platform
+		bpl platfound			; playerz <= end-of-this-platform, so show the platform
 		; otherwise, fall through to trying the next platform
 
 platnext						; seek to the next platform and take a look at doing it
@@ -513,7 +513,7 @@ platnextline
 		bmi vblanktimerendalmost
 
 		lda curline
-		cmp level0,0			; if curline is less than platstart, we've finished rendering this platform and we can bail
+		cmp level0,0			; if curline is less than the start of the platform, we've finished rendering this platform and we can bail
 		bpl platnotclear		; branch to continue rendering if we haven't walked past the start of the platform yet
 platclear
 		lda #0					; we're clear of this platform:  clear out some incremental stuff and go on to the next platform XXX don't think zeroing out curline is necessary
