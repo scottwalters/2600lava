@@ -63,7 +63,7 @@ flap_y		= %01111111;
 		ENDM
 
 ;
-; arctan (formerly platlinedelta)
+; _arctan (formerly platlinedelta)
 ;
 
 ; index the arctan table with four bits of each delta
@@ -74,7 +74,7 @@ flap_y		= %01111111;
 ; deltaz is in tmp1 and deltay is in tmp2 where they get shifted to the right
 ; this also adds half of the screen height or subtracts from half screen height as appropriate to convert to scan line number
 
-		MAC arctan
+		MAC _arctan
 .platlinedelta
 		lda deltaz
 		sta tmp1
@@ -106,7 +106,7 @@ flap_y		= %01111111;
 		bit deltay ; handle the separate cases of the platform above us and the platform below us
 		bmi .platarctan1		; true value indicates platform is above us
 		lda arctangent,y		; platform is below us; add the arctangent value to the middle of the screen
-		bmi .platarctan9		; negative value indicates off screen angle; return the negative value to proprogate the error
+		; bmi .platarctan9		; negative value indicates off screen angle; return the negative value to proprogate the error; we seem to be avoiding this situation right now so commenting it out
 		clc
 		adc #(viewsize/2)
         jmp .platarctan9
@@ -120,7 +120,7 @@ flap_y		= %01111111;
 		ENDM
 
 ;
-; plathypot
+; _plathypot
 ;
 
 ; use a hypotonose table to estimate distance to a line so that we can assign it a width to represent size
@@ -136,7 +136,7 @@ flap_y		= %01111111;
 ; this is just a situation optimized, table driven, unrolled multiplication
 ; it should probably be un-un-rolled a bit
 
-		MAC plathypot
+		MAC _plathypot
 		lda deltay
 		_absolute
 		tay
@@ -168,7 +168,7 @@ flap_y		= %01111111;
 		ENDM
 
 ;
-; plotonscreen
+; _plotonscreen
 ;
 
 ; Y gets the distance, which we use to figure out which size of line to draw
@@ -177,17 +177,25 @@ flap_y		= %01111111;
 ; uses tmp1 during the call to remember the new lastline
 ; this macro is used in three different places; okay, it's only used in one place with fatlines disabled but we're trying to add gap filling logic
 
-		MAC plotonscreen
+		MAC _plotonscreen
 .plotonscreen1
+
 		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
 		sty tmp2				; remember our distance/line size figure
 .plotonscreen2
+
+		cpx lastline			; skip straight to drawing it if we're overwriting a platform of the same color; this won't be safe if multiple platforms on the level are the same color! XXX
+		beq .plotonscreen3a
+
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
 		bpl .plotonscreen4		; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
+.plotonscreen3
+		; actually plot this line on the screen
 		ldy tmp2				; restore our original Y argument
-		lda perspectivetable,y
+.plotonscreen3a
+		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
 		ldy curplat				; unless we save and restore Y, this trashes Y which prevents recursion
 		ora level0+3,y			; add the platform color (level0 contains records of:  start position, length, height, color)
 		sta view,x				; draw to the framebuffer
@@ -487,9 +495,11 @@ platlevelclear2
 		jmp platnext0
 		
 platresume
-		lda curplat			; where we in middle of a platform (other than the 0th one)?
-        ; bne platlineseek	; was doing this but going to platrenderline (formerly plattryline) is more direct/faster if things are in fact properly initialized; this change makes it render differently but it isn't especially bad or wrong; still could probably clean things up a bit and work kinks out...  yeah?  seek to the visible part of the current platform and start drawing; otherwise, fall through to find the next platform XXXX and now platlineseek doesn't exist any more, but this note about "hey, the engine is a bit fucked up" might be useful
-        bne platrenderline     ; yeah?  continue rendering that platform; otherwise, fall through to looping through platforms
+		ldy curplat			; where we in middle of a platform (other than the 0th one)?
+		beq platnext0		; starting at zero, so go seek to the first platform the player can actually see
+		lda level0,y		; did we already hit the end of the level last call this frame?
+		beq platnext0vblanktimer ;  if so, just go busy spin
+        bne platrenderline     ; yeah?  continue rendering the current platform
 
 platnext0
 		; is there a current platform?  if not, go busy spin on the timer.  if so, figure out if any of it is still in front of the player.
@@ -497,14 +507,19 @@ platnext0
 		ldy curplat				; offset into the level0 table
 		lda level0,y			; load the first byte, the Z start position, of the current platform
 		bne platnext1			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
+platnext0vblanktimer
 		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
+
 platnext1
+		; skip to the next platform again unless one ends somewhere in front of us
 		lda level0+1,y			; get the end point of the platform, since the end is the interesting part to test for to see if we can see any of this platform
 		cmp playerz				; compare to where the player is
 		beq platnext			; skip rendering this one if the end is exactly where the player is at; only render stuff forward of us; mostly, we don't want to fall into platrenderline from here starting with a 0 deltaz
 		bpl platfound			; playerz <= end-of-this-platform, so show the platform
 		; otherwise, fall through to trying the next platform
-platnext						; seek to the next platform and take a look at doing it
+
+platnext
+		; seek to the next platform and take a look at doing it
 		ldy curplat
 		iny
 		iny
@@ -530,43 +545,59 @@ platfound
 
 platrenderline
 
-		; XXXXXXX experimental... and it seems to help a lot
+		; if deltay > deltaz, this bit of the platform isn't visible
+		; since we render back to front, we know the rest of the platform isn't visible either, so stop rendering this one and go to the next
+		; this logic avoids the relatively expensive call to arctan
 		; arctan returns negative to indicate this same condition; of this logic works, that logic could be removed
-		lda deltay				; if deltay > deltaz, this bit of the platform isn't visible; avoid the expensive call to arctan
+		lda deltay
 		_absolute
 		sec
 		sbc deltaz
 		bpl platnext
 
-		arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
-		bmi platnext			; negative return value indicates that the angle is steeper than our field of view; since we're working backwards from the end of the platform towards ourselves, we know we won't be able to see any lines closer to us if we can't see this one, so just skip to platnext
+		_arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+		; bmi platnext			; negative return value indicates that the angle is steeper than our field of view; since we're working backwards from the end of the platform towards ourselves, we know we won't be able to see any lines closer to us if we can't see this one, so just skip to platnext; we seem to be avoiding this situation currently so commenting this check out for now
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
-		plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+		_plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+
+;		debugging; are we still getting zero width platform segments that chew up CPU?  looks like not
+;		cmp #0
+;	 	bne testtesttest
+;		inc num0		; testing XXXX... how many of these zero width platforms are we seeing each frame?  up to $24.  a lot.
+; testtesttest
 
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
-		beq	platnextline		; XXXXXXXXXXXXX probably because of lack of bounding on calls to plathypot, a lot of zero width stuff is coming back; this takes a lot of time to render now with platonscreen trying to fill in gaps
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
-		plotonscreen			; jsr plotonscreen
+		_plotonscreen			; jsr plotonscreen; Y gets the distance away/platform line width, X gets the scanline to draw at
 		; fall through to platnextline
 
 platnextline
-		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line XX
 
 		lda INTIM
-		; cmp #6					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
-		cmp #9					; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
+		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
+		cmp #6
+		; cmp #8
 		bmi vblanktimerendalmost
 
 		; inc num0				; XXXX counting how many platform lines we render in a frame
 
-		; bit deltaz
-		lda deltaz
-		cmp #1					; don't go below 1
+		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
+		lda deltaz
+		cmp #1					; don't take deltaz below 1
 		bmi platnextline1		; branch to platnext to start in on the next platform if we've walked backwards past the players position for this platform
+
+		lda level0,y			; don't take deltaz below level0+0,y - playerz
+		sec
+		sbc playerz
+		bmi platnextline0a		; branch if the start of the platform is behind us; taking deltaz to all the way down to 1 is fine in that case
+		cmp deltaz				; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
+		bpl platnextline1		; deltaz not larger than level0,y - playerz; go to the next platform
+platnextline0a
+
 		jmp platrenderline		; otherwise loop back to render the next line of this platform; too far away for a relative branch
 platnextline1
 		jmp platnext			; too far away for a relative branch
@@ -759,6 +790,10 @@ gamelogic7
 		align 256
 
 ; playfield data for each register, indexed by width of the platform to draw
+; 20 entries
+; furtherest away platform (no data) first then full width platform at pf*lookup[19]
+; pf0 is 4 bits wide and is the first four bits drawn on the left edge of the screen (and right edge since we're mirrored); bits are stored in the high nibble; bits are also stored in reverse order than how drawn
+; pf1 is the next 8 bits and pf2 the last 8 bits ending at the center of the screen
 
 pf0lookup
 		dc.b #%00000000
@@ -977,7 +1012,8 @@ arctangent
 
 ; z = 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
                 dc.b %0000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0; y = 0
-                dc.b %0000000, 53, 31, 22, 16, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 4; y = 1
+                dc.b %0000000, 53, 31, 22, 16, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 3; y = 1
+                ; dc.b %0000000, 53, 31, 22, 16, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 4; y = 1  ;  try to smooth this out a bit?  above.  not too much or things do start to stretch in a strange way.
                 dc.b %0000000, 53, 53, 40, 31, 26, 22, 19, 16, 15, 13, 12, 11, 10, 9, 9; y = 2
                 dc.b %0000000, 255, 53, 53, 44, 37, 31, 27, 24, 22, 20, 18, 16, 15, 14, 13; y = 3
                 dc.b %0000000, 255, 255, 53, 53, 46, 40, 35, 31, 28, 26, 23, 22, 20, 19, 17; y = 4
@@ -993,25 +1029,6 @@ arctangent
                 dc.b %0000000, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 53, 53, 51; y = 14
                 dc.b %0000000, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 53, 53; y = 15
 
-
-
-; previous XXXXXXXXXXX
-		dc.b 25, 15, 10, 8, 6, 5, 4, 4, 3, 3, 2, 1, 1, 0, 0, 0 
-		dc.b 36, 25, 19, 15, 12, 10, 9, 8, 7, 6, 5, 5, 4, 3, 3, 2
-		dc.b 40, 32, 25, 21, 17, 15, 13, 11, 10, 9, 8, 8, 7, 6, 6, 6
-		dc.b 43, 36, 30, 25, 22, 19, 16, 15, 13, 12, 11, 10, 9, 9, 8, 8
-		dc.b 44, 38, 33, 29, 25, 22, 20, 18, 16, 15, 13, 12, 11, 11, 10, 9
-		dc.b 45, 40, 36, 32, 28, 25, 23, 21, 19, 17, 16, 15, 14, 13, 12, 11
-		dc.b 46, 42, 38, 34, 31, 28, 25, 23, 21, 19, 18, 17, 16, 15, 14, 13 
-		dc.b 47, 43, 39, 36, 33, 30, 27, 25, 23, 22, 20, 19, 18, 16, 16, 15 
-		dc.b 47, 44, 40, 37, 34, 32, 29, 27, 25, 23, 22, 21, 19, 18, 17, 16 
-		dc.b 48, 44, 41, 38, 36, 33, 31, 29, 27, 25, 24, 22, 21, 20, 19, 18 
-		dc.b 48, 45, 42, 39, 37, 34, 32, 30, 28, 27, 25, 24, 22, 21, 20, 19 
-		dc.b 48, 45, 43, 40, 38, 36, 34, 32, 30, 28, 27, 25, 24, 23, 22, 21 
-		dc.b 48, 46, 43, 41, 39, 37, 35, 33, 31, 29, 28, 26, 25, 24, 23, 22 
-		dc.b 48, 46, 44, 42, 40, 38, 36, 34, 32, 31, 29, 28, 26, 25, 24, 23 
-		dc.b 49, 46, 44, 42, 40, 38, 37, 35, 33, 32, 30, 29, 27, 26, 25, 24 
-		dc.b 49, 47, 45, 43, 41, 39, 37, 36, 34, 33, 31, 30, 29, 27, 26, 25 
 
 ;
 ; perspectivetable

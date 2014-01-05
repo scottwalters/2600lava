@@ -1,4 +1,67 @@
-o. let's turn this into a sort of freerunning first person platformer
+x. testing making no calls to platresume and that seems to be working pretty well; maybe I should do an experiment and have it count how many lines it does
+    ... $0e or so.  not many.  okay, $14 with the first jsr platresume after the jsr platlevelclear enabled.  same ($14) with the 3rd platresume enabled.
+    ... after add gap filling logic to plotonscreen to replace the fatlines logic, it is drawing fewer platforms but says $1C lines considered (28);
+        it's also drawing everything forward of our position so many of those probably aren't visible
+
+x. observing a lot of garbage being drawn that isn't platform
+   ... aha, curplat is going way past 08; not detecting the end of level0 properly
+       ... break on platnext0
+       ... okay, it's fine until we return and platresume is called again
+   ... fixed; on resume, check to see if we're off the end of level0
+
+x. hey, wait... deltaz is apparently counting down to 1 for all platflorms, not just the ones we're standing on
+   ...    dec deltaz              ; deltaz goes down to zero; ... not always!  only when it isn't off in the distance!
+   ... how does this look right at all?
+   ... platfound initializes deltaz with level0+1,y - playerz
+   ... changed it to count down to level0+0,y - playerz and stop
+       ... hey, the platforms got a lot shorter.  I guess it really was just drawing them until it ran out of CPU!
+       ... so that's where all of the CPU was going!  it really looked right, too.  huh.  crazy.
+       ... okay, now it's really, really fast; it creams through the three platforms during the first call and finishes with lots of time left on the clock
+
+x. egads, how many times do we draw a bit platform over a bit of the same platform?
+   ... interpolating between start/end is starting to look more and more appealing
+   ... $15 times; not terrible; still...
+; how often do we draw a bit of platform over a bit of platform of the same color?
+        lda view,x
+        and #%1110000
+        ldy curplat
+        cmp level0+3,y
+        bne testytest
+        inc num0
+testytest 
+
+x. I think I have z-buffering hooked up backwards!  low numbers are far away
+   ... well, flipping the sense of it makes it draw nothing on the plain background, and tracing it, it does the right thing in the case of the plain background
+   ... correct in the case of 8 being in the frame buffer and it wanting to draw a 9 there
+
+x. reconsider trying to enforce a 45 degree viewing angle; we're rendering up to $1E platform lines and can't stuff the green platform off in the distance any more
+   ... done; this speeds things up a lot
+
+x. remember the last scan line we drew a line on so we can fill in the gaps when we draw the next line.
+    ... need to handle the case where lastline-curline is +/- 1 and not recurse so we don't clobber a narrower line with a fatter line... okay
+    ... after this, we had to bump up our INTIM check from 7 to 9 (128 more cycles) to avoid screen jump; we're rending up to $1C lines but we can't see
+        the far away green platform at the start any more
+        ... also, closer things aren't being rendered when they should
+    ... could at least shave some cycles from plotonscreen so we can put INTIM back down to 8 at least
+    ... upwards of $29 gap lines are filed in (or depth checked to see if they can be filled in); this is waaay too many
+        ... is there a black platform...?
+        ... even skipping the terrible zero width platform pieces, I'm seeing $28 bits of gap filled in though the green platform bit starts to show up again
+
+x. with some inc num0 logic, I'm not finding any cases where 255/out of range stuff is being returned from arctan; dropping the error checking
+
+x. really not convinced we're getting 111 lines of display; is the 45 degree angle check to blame?  what is the real range of the hypot table?
+   ... go through this rendering logic again
+   ... angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
+       ... yeah, that 45 degree check, or some related logic, was screwing us up there; still want to go through all of the rendering math and check things
+   ... okay, we were *not* getting 110 lines of display; the arctan table has to be generated for the lines since it returns the scan line number
+
+x. lda playerzspeed        ; this is 1.4.3 fixed place
+    ^--- make not 1.4.3 and I don't think it is anyway
+
+x. rename plattryline to platrenderline since that's where the rendering happens
+
+x. curline and deltaz are probably redundant with each other as well and one could be eliminated
+   ... probably eliminate curline since a lot of routines use deltaz directly and its more immediately useful
 
 x. get rid of the platstart variable
    ... we can get rid of platstart if we skip the optimization where we figure out which line of the platform is the first one we can see
@@ -91,9 +154,6 @@ x. why the hell do we jsr gamelogic in platlevelclear2?
   ... apparently just because that's the point where it's kind of done with things in there
   ... fixed
 
-x. testing making no calls to platresume and that seems to be working pretty well; maybe I should do an experiment and have it count how many lines it does
-    $0e or so.  not many.  okay, $14 with the first jsr platresume after the jsr platlevelclear enabled.  same ($14) with the 3rd platresume enabled.
-
 x. in platrumes, don't iterate until the end of all of the platforms but instead do a fixed number of platforms or work for a fixed number of frames
    ... to better accomodate large levels and wrap-around
    ... maybe no wrap-around for a platformer
@@ -172,6 +232,10 @@ maybe should have kept with X/Y rather than Y/Z
 
 ; todo: waves.  when the birds are dead, pause a moment, and create more!
 
+o. maybe rather than the platforms being solid colored, make the striped as in Atari 2600 - Demoscene - 02 - Ataventure - Atari 2600 demo by Kk Dma.mp4
+   also Atari 2600 - Demoscene - 04 - Trsi Digital Sounds System Crest - aTaRSI (2013) Atari Vcs.mp4 shades things darker when they're further away -- nice!
+   the background should also be shaded and colored
+
 o. bug: why won't it render the one platform when there is only one platform in the level?
    ... is it rendering all of the platforms right now?  haven't taken a close look at this
 
@@ -195,9 +259,6 @@ o. re-working the vblank logic, I broke joystick button latching (which is part 
    ... need to re-read how this is supposed to work
    ... okay, writing a 1 to D6 of VBLANK enables latching; once enabled (or reset by turning off then on), INPT4 and 5 are high but go low and stay low on fire
 
-lda playerzspeed        ; this is 1.4.3 fixed place
-  ^--- make not 1.4.3 and I don't think it is anyway
-
 o. physics is kinda fucked; revisit
    ... playeryspeed is not handled comprehensively
    ... handle as 2s compliment
@@ -216,17 +277,33 @@ o. the TIM32 timings are quite probably off by one or so
 
 o. make the arctan table two pages long instead of one for more precision?
 
+o. shouldn't be calling arctan with 0s for deltas since part of the formula the table is generated with is atan($z/$y)
+   ... calling it with two 0 deltas will make it run forever; okay, it handles this special case now, though I wish I didn't have to spend the CPU cycles
+       ... swapping Y and Z could avoid a division by zero if we stop following the platform when deltaz == 1, which we currently do
+   
 o. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
    interpolate between them
 
-o. rather than doing jsr/rts, just use one memory location as an index into a jump table of where to return to
+o. rather than doing jsr/rts, just use one memory location as an index into a jump table of where to return to; this would save one byte of RAM
+    ... or don't jsr at all; we're rts'ing so that WSYNC etc can be diddled; just do it inline
+    ... still need a byte to keep track of where we are in the vblank process
 
 o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
-o. really not convinced we're getting 111 lines of display; is the 45 degree angle check to blame?  what is the real range of the hypot table?
-   ... go through this rendering logic again
-   ... angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
-       ... yeah, that 45 degree check, or some related logic, was screwing us up there; still want to go through all of the rendering math and check things
+o. _plathypot could probably be optimized
 
-o. curline and deltaz are probably redundant with each other as well and one could be eliminated
-   ... probably eliminate curline since a lot of routines use deltaz directly and its more immediately useful
+o. the thing is currently rendering a lot of width 0 stuff; this gets drawn as nothing on the display; this is probably a fuck-up with the arctan lookup
+   operating without bounding
+
+o. try to get INTIM checks back to 7 or at least 8; up to 9 from 7 right now
+    XXX X gets its value from S before being passed in; could just pass in S instead of X and leave X free, to shave cycles in here
+
+o. let's turn this into a sort of freerunning first person platformer
+
+
+;       debugging; are we still getting zero width platform segments that chew up CPU?  looks like not
+;       cmp #0
+;       bne testtesttest    
+;       inc num0        ; testing XXXX... how many of these zero width platforms are we seeing each frame?  up to $24.  a lot.
+; testtesttest
+
