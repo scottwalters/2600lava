@@ -1,0 +1,29 @@
+
+    cpx #5
+    beq l1
+    lda #$4d
+    .byte $2c         ; bit $53ad ... essentially turns the next two bytes into 3 byte no-op that only affects the flags so that it can fall through
+la  lda #$53
+    jmp whatever
+
+ A smart way to decrement a 2-byte number:
+
+		LDA LO
+		BNE :CONT
+		DEC HI
+	:CONT	DEC LO
+
+(one of many useful Raeto West tricks). 
+
+http://www.qotile.net/sequencer.html
+http://www.qotile.net/loopcart.html
+http://www.6502.org/source/ -- sort routines, string manip, conversions, math routines, sample apps
+http://www.obelisk.demon.co.uk/6502/reference.html
+http://www.ffd2.com/fridge/
+http://atariage.com/forums/topic/163495-harmony-dpc-programming/
+http://atariage.com/forums/topic/180632-32-character-text-display/
+http://atariage.com/forums/topic/183085-bus-stuffing-like-the-graduate/
+http://www.atariage.com/2600/archives/schematics_tia/index.html
+http://www.bjars.com/disassemblies.html
+http://arctangent.net/atan.html
+
