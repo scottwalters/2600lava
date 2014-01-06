@@ -1,6 +1,8 @@
 
 package symbols;
 
+use 5.18.0;
+
 use strict;
 use warnings;
 
@@ -19,16 +21,30 @@ sub symbols {
 
     open my $fh, '<', $fn or die $!;
     while( my $line = readline $fh ) {
-        if( my @line = $line =~ m/^[ 0-9]{7}  ([a-z0-9]{4})\t{4} {3}(\w+)/ ) {
-            $symbols{$2} = $1;
-        } elsif( my @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00\t {3}(\w+)/ ) {
-            $symbols{$2} = $1;
+        my @line;
+        if( @line = $line =~ m/^[ 0-9]{7}  ([a-z0-9]{4})\t{4} {3}(\w+)/ ) {
+            $symbols{$2} = hex($1);
+        } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00\t {3}(\w+)/ ) {
+            $symbols{$2} = hex($1);
         }
     }
     close $fh;
 
-    return %symbols;
+    package symbols::autoload {
+
+        sub AUTOLOAD {
+            my $self = shift;
+            my $method = our $AUTOLOAD; $method =~ s/.*:://;
+            return if $method eq 'DESTROY';
+            exists $self->{$method} or die "no symbol for the method ``$method''";
+            $self->{$method};
+        }
+
+        return bless \%symbols;
+    }
 
 }
+
+
 
 1;
