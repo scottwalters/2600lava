@@ -26,6 +26,8 @@ sub symbols {
             $symbols{$2} = hex($1);
         } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00\t {3}(\w+)/ ) {
             $symbols{$2} = hex($1);
+        } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00 00 00 00\*(\w+)/ ) { # this shit is just wonky
+            $symbols{$2} = hex($1);
         }
     }
     close $fh;
@@ -43,6 +45,12 @@ sub symbols {
         return bless \%symbols;
     }
 
+}
+
+sub test {
+    use Data::Dumper;
+    # print Dumper symbols('newbies.lst');
+    symbols('newbies.lst')->view;
 }
 
 
