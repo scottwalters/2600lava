@@ -22,7 +22,7 @@ sub symbols {
     open my $fh, '<', $fn or die $!;
     while( my $line = readline $fh ) {
         my @line;
-        if( @line = $line =~ m/^[ 0-9]{7}  ([a-z0-9]{4})\t{4} {3}(\w+)/ ) {
+        if( @line = $line =~ m/^[ 0-9]{7}  ([a-z0-9]{4})\t{4} {3}([\.\w]+)/ ) {
             $symbols{$2} = hex($1);
         } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00\t {3}(\w+)/ ) {
             $symbols{$2} = hex($1);
