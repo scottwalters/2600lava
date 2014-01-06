@@ -577,9 +577,8 @@ platrenderline
 platnextline
 
 		lda INTIM
-		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety. XXX something is screwed up here... in some cases, this is taking way too much time
+		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
 		cmp #6
-		; cmp #8
 		bmi vblanktimerendalmost
 
 		; inc num0				; XXXX counting how many platform lines we render in a frame
@@ -1060,7 +1059,7 @@ level0
         ; platform start point in the level, platform end point, height of the platform, color (index into the colors table shifted left five bits)
         ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
 		dc.b 1, 11, $1e,  %00100000
-		dc.b 20, 20, $14, %01000000
+		dc.b 20, 25, $14, %01000000
        dc.b 30, 40, $18,  %01100000
 ;		dc.b 15, 25, $19, %01100000
 		dc.b 0, 0, 0, 0 		;       end
