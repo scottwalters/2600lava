@@ -79,7 +79,7 @@ for my $deltas (
     diag "scanline_according_to_perl $scanline_according_to_perl";
 
     my $truncated_deltay = abs($deltay);
-    my $truncated_deltaz = $deltaz;
+    my $truncated_deltaz = $deltaz - $truncated_deltay;
     while( $truncated_deltay > 0x0f or $truncated_deltaz > 0x0f ) {
         $truncated_deltay >>= 1;
         $truncated_deltaz >>= 1;
