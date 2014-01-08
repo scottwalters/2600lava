@@ -22,7 +22,7 @@ num0    ds 1		; number to output, left
 tmp1	ds 1
 tmp2	ds 1
 
-NUMG0	= tmp2		; pattern buffer temp -- number output (already uses temp)
+NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
 
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
@@ -66,6 +66,7 @@ flap_y		= %01111111;
 ; _arctan (formerly platlinedelta)
 ;
 
+; takes deltaz and deltay
 ; index the arctan table with four bits of each delta
 ; we use the most significant non-zero four bits of each delta
 ; the arctan table is indexed by the ratio of the y and z deltas
@@ -184,9 +185,12 @@ flap_y		= %01111111;
 		sty tmp2				; remember our distance/line size figure
 .plotonscreen2
 
-		cpx lastline			; skip straight to drawing it if we're overwriting a platform of the same color; this won't be safe if multiple platforms on the level are the same color! XXX
-		beq .plotonscreen3a
+		cpx lastline			; are we drawing on top of the last line we drew for this platform?
+		; beq .plotonscreen3a	; skip straight to drawing it if we're overwriting a platform of the same color; this won't be safe if multiple platforms on the level are the same color! XXX
+		beq .plotonscreen8		; then do nothing
 
+.plotonscreen2a
+		ldy tmp2				; restore our original Y argument XXX just added this to fix a bug; needed for one code path
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
@@ -206,7 +210,7 @@ flap_y		= %01111111;
 
 		lda SWCHB
 		and #%00000010			; select switch
-		bne .plotonscreen8 		; XXXXXXXXXXXXXXXXXXXX testing; never fill in gaps
+		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
 
 		txa
 		sec
@@ -220,11 +224,11 @@ flap_y		= %01111111;
 .plotonscreen5
 		inc num0				; XXXX count how many lines we fill in XXXXXXXXXXXXXXXXX upwards of $28... waay too many... not nearly that many lines on the screen
 		dex						; drawing downwards relative last plot; step back up one line and draw there
-		jmp .plotonscreen2		; recurse back in
+		jmp .plotonscreen2a		; recurse back in
 .plotonscreen6
 		inc num0				; XXXX count how many lines we fill in
 		inx
-		jmp .plotonscreen2		; recurse back in
+		jmp .plotonscreen2a		; recurse back in
 .plotonscreen8
 		lda tmp1				; after we're done recursing to fill in the gaps, update lastline
 		sta lastline
@@ -260,7 +264,7 @@ reset0  sta $80,x
 		; hardware
 		sta $281				; all joystick pins for input
 
-		; player location
+		; player location on map
 		ldy #2
 		sty playerz
 		ldy #32
@@ -270,10 +274,7 @@ startofframe
 
 ; initialize registers
 
-		lda #%00001110
-		sta COLUPF
-
-		lda #%00000000
+		lda #$00
 		sta COLUBK
 
 		lda #%00000101		; reflected playfield with priority over players
@@ -281,9 +282,9 @@ startofframe
 
 		lda #0
 		sta VBLANK
-		sta PF0
-		sta PF1
-		sta PF2
+		; sta PF0
+		; sta PF1
+		; sta PF2
 
 		sta WSYNC
 
@@ -578,7 +579,8 @@ platnextline
 
 		lda INTIM
 		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
-		cmp #6
+		; cmp #6
+		cmp #7
 		bmi vblanktimerendalmost
 
 		; inc num0				; XXXX counting how many platform lines we render in a frame
@@ -586,7 +588,7 @@ platnextline
 		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
 		lda deltaz
-		cmp #1					; don't take deltaz below 1
+		cmp #2					; don't take deltaz below 1
 		bmi platnextline1		; branch to platnext to start in on the next platform if we've walked backwards past the players position for this platform
 
 		lda level0,y			; don't take deltaz below level0+0,y - playerz
@@ -988,15 +990,29 @@ distancemods
 
 ; build a 256 byte table of possible inputs for deltax and deltay translated to angle
 ; output is scaled so it fits in 0-55 to allow for a 110 line tall window
+; with a 45 degree up and down viewing angle, we'd get a 90 scanline high screen
+; given a 110 line display instead of 90, perl -e 'print 110/90;', we have to multiply the angles by 1.2 to get scanlines
+; okay, these get added to/subtracted from scanline 55 (given 110 scan lines) and we can't hit 110, only 109, so clamp it to 54
+;
 ; use Math::Trig;
-; print "; y = @{[ (0..15) ]}\n";
-; for my $z (0..15) {
+; my $scanlines = 108;
+; my $field_of_view_in_angles = 90;
+; my $multiplier = $scanlines / $field_of_view_in_angles;
+; print "; z = @{[ (0..15) ]}\n";
+; for my $y (0..15) {
 ;    print "\t\tdc.b ";
-;    for my $y (0..15) {
-;        if( $y == 0 ) { print "0, "; next; }
-;        print int(rad2deg(atan($z/$y))*0.62)||0, ", ";
+;    for my $z (0..15) {
+;        if( $z == 0 ) { print '%0000000, '; next; }
+; #       if( $y > $z+1  ) { print "255, "; next; }  # we can't see these, but if we find the start and end widths of the platform
+; #                 and interpolate between them, we want this info
+; #        print int(rad2deg(atan($z/$y))*0.62)||0, ", ";
+; #       print int(rad2deg(atan($z/$y))), ", ";
+;          my $angle = int(rad2deg(atan($y/$z))*$multiplier);
+; #         $angle = 54 if $angle > 54; # viewsize / 2 with a viewsize of 110
+;          print $angle;
+;          print ", " if $z != 15;
 ;    }
-;    print "; z = $z\n";
+;    print "; y = $y\n";
 ; }
 ; print "\n";
 
@@ -1060,23 +1076,17 @@ level0
         ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
 		dc.b 1, 11, $1e,  %00100000
 		dc.b 20, 25, $14, %01000000
-       dc.b 30, 40, $18,  %01100000
+		dc.b 30, 40, $18,  %01100000
 ;		dc.b 15, 25, $19, %01100000
 		dc.b 0, 0, 0, 0 		;       end
 		dc.b 0, 0, 0, 0 		;       end
 
 colors
 
- 		dc.b %11111110,  %01011100, %01101100, %10111000
- 		dc.b %11111110,  %01011100, %01101100, %10111000		; repeat because highbit gets used as color index but is really a flag!
-
-; %0000... is white/grey/black
-; %1000... is blue
-; %0100... is red
-; %1100... is green
-; %1110... golden
-; %1111... organge
-
+ 		dc.b $fe  ; light green
+		dc.b $5c  ; pink
+		dc.b $6c  ; light purple
+		dc.b $b8  ; blue-green
 
 ;
 ;
