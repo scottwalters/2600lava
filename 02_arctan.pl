@@ -69,6 +69,7 @@ for my $deltas (
     [-19, 94],
     [-21, 70],
     [-58, 118],
+    [0, 30],     # test special case where Y = 0
 ) {
     my $deltay = $deltas->[0];
     my $deltaz = $deltas->[1];
