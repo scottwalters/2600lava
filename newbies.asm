@@ -102,9 +102,10 @@ flap_y		= %01111111;
 		; sta num0
 		tay
 		bit deltay ; handle the separate cases of the platform above us and the platform below us
-		bmi .platarctan1		; true value indicates platform is above us
+; XXXX highly experimental... let's try to turn the screen upside down to save a cmp in the display kernel; wording below hasn't been updated yet... totally worked!
+;		bmi .platarctan1		; true value indicates platform is above us
+		bpl .platarctan1		; true value indicates platform is above us
 		lda arctangent,y		; platform is below us; add the arctangent value to the middle of the screen
-		; bmi .platarctan9		; negative value indicates off screen angle; return the negative value to proprogate the error; we seem to be avoiding this situation right now so commenting it out
 		clc
 		adc #(viewsize/2)
         jmp .platarctan9
@@ -267,9 +268,14 @@ reset0  sta $80,x
 		ldy #32
 		sty playery
 
-startofframe
 
-; initialize registers
+
+;
+; platform graphics
+;
+
+
+startofframe
 
 		lda #$00
 		sta COLUBK
@@ -283,74 +289,45 @@ startofframe
 		; sta PF1
 		; sta PF2
 
-		sta WSYNC
-
-;
-;
-; display
-;
-;
-
-display
-
-;
-; platform graphics
-;
-
-		ldx #0			; platforms display loop init
+		ldy #viewsize			; indexes the view table and is our scanline counter
 
 platforms
-		lda view,x			; +4    31
-		lsr					; +2    33      upper 3 bits are platform color
-		lsr					; +2    35
-		lsr					; +2    37
-		lsr					; +2    39
-		lsr					; +2    41
-		tay					; +2	43
-		lda colors,y        ; +5    48
+
+; maybe use Y as the viewsize loop counter so I can use lax?
+; high bit or something should indicate a bit of sprite
+; we get 22 cycles before drawing starts, and then 76 total for the scan line
+; previously, we were starting on the line before, and that seemed to work well
+
+		ldx view,y				; +4 ... prefetch to prime the pump
 		sta WSYNC
-		sta COLUPF			; +3    51
-		lda view,x			; +4    55
-		and #%00011111		; +3    58      lower 5 bits is platform width
-		tay					; +2    60
-		lda pf0lookup,y		; +4    64
-		; sta WSYNC			; +3    67 .... of 76
-		sta PF0				; +3     3
-		lda pf1lookup,y		; +4     7
-		sta PF1				; +3    10
-		lda pf2lookup,y		; +4    14
-		sta PF2				; +3    17
+		lda platformcolors,x; +4    4    directly translate the frame buffer line data into a color value
+		sta COLUPF			; +3    7 
+
+		txa					; +2    9    background pattern data to draw the platforms
+		and #%00011111		; +2   11
+		tax					; +2   13
+		lda pf0lookup,x		; +4   17
+		sta PF0				; +3   20    
+		lda pf1lookup,x		; +4   24
+		sta PF1				; +3   27
+		lda pf2lookup,x		; +4   31
+		sta PF2				; +3   34
+
+		tya
+		adc playery
+		tax
+		lda background,x	; +4
+		sta COLUBK			; +3
 		
-		inx					; +2    19
-		cpx #viewsize		; +2    21
-        bne platforms		; +5?   26
+		dey					; +2   
+        bne platforms		; +3   
 
-; putting the color in the low bits frees up some time but I couldn't get the bugs out
-;platforms
-;		lda view,x			; +4    31
-;		and #%00000111		;               lower 3 bits are platform color
-;		tay
-;		lda colors,y
-;		tay
-;		lda view,x
-;		lsr					; +2    33
-;		lsr					; +2    35
-;		lsr					; +2    41
-;		sta WSYNC
-;		sty COLUPF
-;		tay					; +2	43
-;		lda pf0lookup,y		; +4    64
-;		sta PF0				; +3     3
-;		lda pf1lookup,y		; +4     7
-;		sta PF1				; +3    10
-;		lda pf2lookup,y		; +4    14
-;		sta PF2				; +3    17
-;		
-;		inx					; +2    19
-;		cpx #viewsize		; +2    21
-;        bne platforms		; +5?   26
-; scanline 102 now
+;
+;
+;
 
+		lda #$00
+		sta COLUBK
 ;
 ; debugging output (a.k.a. score)
 ;
@@ -1053,6 +1030,58 @@ arctangent
 
 
 ;
+; platformcolors
+;
+
+platformcolors
+
+; in the framebuffer, the top three bits are the color and the bottom five bits (but only up to dec 30) are the line width;
+; this is a quick translation to the top four bits being color and the bottom four being the scaled brightness (based on line width which implies distance)
+
+; for my $i (0..255) {
+;     my $color = $i & 0b11100000;
+;     my $dist =  $i & 0b00011111;
+;     $dist = int( 0x0f / 30 * $dist );
+;     print "\t\t.byte " if 0 == ( $i & 0b0111 );
+;     printf "%%%08b", $color | $dist, "\n";
+;     print( (  0b0111 == ( $i & 0b0111 ) ) ? "\n" : ', ' );
+; }
+
+                .byte %00000000, %00000000, %00000001, %00000001, %00000010, %00000010, %00000011, %00000011
+                .byte %00000100, %00000100, %00000101, %00000101, %00000110, %00000110, %00000111, %00000111
+                .byte %00001000, %00001000, %00001001, %00001001, %00001010, %00001010, %00001011, %00001011
+                .byte %00001100, %00001100, %00001101, %00001101, %00001110, %00001110, %00001111, %00001111
+                .byte %00100000, %00100000, %00100001, %00100001, %00100010, %00100010, %00100011, %00100011
+                .byte %00100100, %00100100, %00100101, %00100101, %00100110, %00100110, %00100111, %00100111
+                .byte %00101000, %00101000, %00101001, %00101001, %00101010, %00101010, %00101011, %00101011
+                .byte %00101100, %00101100, %00101101, %00101101, %00101110, %00101110, %00101111, %00101111
+                .byte %01000000, %01000000, %01000001, %01000001, %01000010, %01000010, %01000011, %01000011
+                .byte %01000100, %01000100, %01000101, %01000101, %01000110, %01000110, %01000111, %01000111
+                .byte %01001000, %01001000, %01001001, %01001001, %01001010, %01001010, %01001011, %01001011
+                .byte %01001100, %01001100, %01001101, %01001101, %01001110, %01001110, %01001111, %01001111
+                .byte %01100000, %01100000, %01100001, %01100001, %01100010, %01100010, %01100011, %01100011
+                .byte %01100100, %01100100, %01100101, %01100101, %01100110, %01100110, %01100111, %01100111
+                .byte %01101000, %01101000, %01101001, %01101001, %01101010, %01101010, %01101011, %01101011
+                .byte %01101100, %01101100, %01101101, %01101101, %01101110, %01101110, %01101111, %01101111
+                .byte %10000000, %10000000, %10000001, %10000001, %10000010, %10000010, %10000011, %10000011
+                .byte %10000100, %10000100, %10000101, %10000101, %10000110, %10000110, %10000111, %10000111
+                .byte %10001000, %10001000, %10001001, %10001001, %10001010, %10001010, %10001011, %10001011
+                .byte %10001100, %10001100, %10001101, %10001101, %10001110, %10001110, %10001111, %10001111
+                .byte %10100000, %10100000, %10100001, %10100001, %10100010, %10100010, %10100011, %10100011
+                .byte %10100100, %10100100, %10100101, %10100101, %10100110, %10100110, %10100111, %10100111
+                .byte %10101000, %10101000, %10101001, %10101001, %10101010, %10101010, %10101011, %10101011
+                .byte %10101100, %10101100, %10101101, %10101101, %10101110, %10101110, %10101111, %10101111
+                .byte %11000000, %11000000, %11000001, %11000001, %11000010, %11000010, %11000011, %11000011
+                .byte %11000100, %11000100, %11000101, %11000101, %11000110, %11000110, %11000111, %11000111
+                .byte %11001000, %11001000, %11001001, %11001001, %11001010, %11001010, %11001011, %11001011
+                .byte %11001100, %11001100, %11001101, %11001101, %11001110, %11001110, %11001111, %11001111
+                .byte %11100000, %11100000, %11100001, %11100001, %11100010, %11100010, %11100011, %11100011
+                .byte %11100100, %11100100, %11100101, %11100101, %11100110, %11100110, %11100111, %11100111
+                .byte %11101000, %11101000, %11101001, %11101001, %11101010, %11101010, %11101011, %11101011
+                .byte %11101100, %11101100, %11101101, %11101101, %11101110, %11101110, %11101111, %11101111
+
+
+;
 ; perspectivetable
 ;
 
@@ -1079,21 +1108,90 @@ perspectivetable
 ;
 
 level0
-        ; platform start point in the level, platform end point, height of the platform, color (index into the colors table shifted left five bits)
+        ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers)
         ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
-		dc.b 1, 11, $1e,  %00100000
-		dc.b 20, 25, $14, %01000000
-		dc.b 30, 40, $18,  %01100000
-;		dc.b 15, 25, $19, %01100000
+		dc.b 1, 11, $1e,  $e0
+		dc.b 20, 25, $14, $60
+		dc.b 30, 40, $18, $20
 		dc.b 0, 0, 0, 0 		;       end
 		dc.b 0, 0, 0, 0 		;       end
 
-colors
 
  		dc.b $fe  ; light green
 		dc.b $5c  ; pink
 		dc.b $6c  ; light purple
 		dc.b $b8  ; blue-green
+
+
+;
+; background
+;
+
+; upside down, to match the view buffer
+; 22+ sets of 5 to match the 110 lines of frame buffer
+
+background
+
+        .byte $26, $26, $26, $26, $26
+        .byte $26, $26, $26, $26, $26  ; lightest dirt -- this winds up staying on the screen past the end of the framebuffer
+
+        .byte $24, $24, $24, $24, $24
+        .byte $24, $24, $24, $24, $24
+        .byte $24, $24, $24, $24, $24   ; lighter dirt
+
+        .byte $22, $22, $22, $22, $22   ; dirt
+
+		.byte $9a, $9a, $9a, $9a, $9a	; lighest sky
+		.byte $9a, $9a, $9a, $9a, $9a
+		.byte $9a, $9a, $9a, $9a, $9a
+
+		.byte $98, $98, $98, $98, $98	; middle sky
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+		.byte $98, $98, $98, $98, $98
+
+		.byte $96, $96, $96, $96, $96	; less dark sky
+		.byte $96, $96, $96, $96, $96
+		.byte $96, $96, $96, $96, $96
+
+		.byte $84, $84, $84, $84, $84	; dark sky
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+		.byte $84, $84, $84, $84, $84
+
+		.byte $82, $82, $82, $82, $82
+		.byte $82, $82, $82, $82, $82
+		.byte $82, $82, $82, $82, $82
+		.byte $82, $82, $82, $82, $82
+
+		.byte $80, $80, $80, $80, $80
+		.byte $80, $80, $80, $80, $80
+		.byte $80, $80, $80, $80, $80
+		.byte $80, $80, $80, $80, $80
+
+		.byte $02, $02, $02, $02, $02
+		.byte $02, $02, $02, $02, $02
+		.byte $02, $02, $02, $02, $02
+		.byte $02, $02, $02, $02, $02
+
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+
 
 ;
 ;
