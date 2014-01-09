@@ -101,19 +101,16 @@ flap_y		= %01111111;
         ora tmp1
 		; sta num0
 		tay
-		bit deltay ; handle the separate cases of the platform above us and the platform below us
-; XXXX highly experimental... let's try to turn the screen upside down to save a cmp in the display kernel; wording below hasn't been updated yet... totally worked!
-;		bmi .platarctan1		; true value indicates platform is above us
-		bpl .platarctan1		; true value indicates platform is above us
-		lda arctangent,y		; platform is below us; add the arctangent value to the middle of the screen
+		bit deltay				; handle the separate cases of the platform above us and the platform below us
+		bpl .platarctan1		; branch if deltay is positive; this means that the platform is lower than us
+		lda arctangent,y		; platform is above us; add the arctangent value to the middle of the screen
 		clc
-		adc #(viewsize/2)
+		adc #(viewsize/2)		; 'view' is upside down, so adding relative to the middle of it moves things towards the top of the screen
         jmp .platarctan9
 .platarctan1
-		; platform is above us; subtract the arctangent value from the middle of the screen
-		lda #(viewsize/2)
+		lda #(viewsize/2)		; platform is below us; subtract the arctangent value from the middle of the screen
 		sec
-		sbc arctangent,y
+		sbc arctangent,y		; 'view' is upside down, so subtracting relative the middle of it moves things towards the bottom of the screen
 		; negative value indicates off screen angle; return the negative value to proprogate the error
 .platarctan9
 		ENDM
