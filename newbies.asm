@@ -23,6 +23,7 @@ tmp1	ds 1
 tmp2	ds 1
 
 NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
+scanline = tmp1
 
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
@@ -286,49 +287,62 @@ startofframe
 		; sta PF1
 		; sta PF2
 
-		ldy #viewsize			; indexes the view table and is our scanline counter
+		lda #viewsize			; indexes the view table and is our scanline counter
+		sta scanline
+
+		lda playery				; 1/4 playery for picking background color for shaded sky/earth
+		lsr
+		lsr
+		sta tmp2
+
+		sta WSYNC			
+		bne renderpump			; always
 
 platforms
 
-; maybe use Y as the viewsize loop counter so I can use lax?
 ; high bit or something should indicate a bit of sprite
 ; we get 22 cycles before drawing starts, and then 76 total for the scan line
-; previously, we were starting on the line before, and that seemed to work well
+; XXX try using a memory variable as our scanline counter to free up Y for unloading data quick before draw starts
 
-		ldx view,y				; +4 ... prefetch to prime the pump
-		sta WSYNC
-		lda platformcolors,x; +4    4    directly translate the frame buffer line data into a color value
-		sta COLUPF			; +3    7 
+		sta WSYNC			; +2   72
+		sty COLUBK			; +3    3
+		sta COLUPF			; +3    6 
 
-		txa					; +2    9    background pattern data to draw the platforms
-		and #%00011111		; +2   11
-		tax					; +2   13
-		lda pf0lookup,x		; +4   17
-		sta PF0				; +3   20    
-		lda pf1lookup,x		; +4   24
-		sta PF1				; +3   27
-		lda pf2lookup,x		; +4   31
-		sta PF2				; +3   34
+		lda view,x			; +4   10
+		and #%00011111		; +2   12
+		tax					; +2   14
+		lda pf0lookup,x		; +4   18
+		sta PF0				; +3   21
+		lda pf1lookup,x		; +4   25
+		sta PF1				; +3   28 .... XXXX this one happens too late
+		lda pf2lookup,x		; +4   32
+		sta PF2				; +3   35
 
-		tya
-		adc playery
-		tax
-		lda background,x	; +4
-		sta COLUBK			; +3
+renderpump
+
+		; get COLUPF, COLUBK, and scanline values ready to roll
+		lda scanline		; +3    38  get value for COLUBK ready in Y
+		adc tmp2			; +3    41
+		tax					; +2    43
+		ldy background,x	; +4    47
+
+		ldx scanline		; +2    50    get value for COLUPF ready in A
+		lda view,x			; +4    54
+		tax					; +2    56
+		lda platformcolors,x; +4    60
+
+		ldx scanline		; +3   63    get scanlineindex 
 		
-		dey					; +2   
-        bne platforms		; +3   
+		dec scanline		; +5   68   yowch... 
+        bne platforms		; +3   71
 
-;
-;
-;
 
-		lda #$00
-		sta COLUBK
 ;
 ; debugging output (a.k.a. score)
 ;
 
+		lda #$00
+		sta COLUBK
 score
 		sta WSYNC
 		lda #0
@@ -766,6 +780,7 @@ gamelogic7
 ; furtherest away platform (no data) first then full width platform at pf*lookup[19]
 ; pf0 is 4 bits wide and is the first four bits drawn on the left edge of the screen (and right edge since we're mirrored); bits are stored in the high nibble; bits are also stored in reverse order than how drawn
 ; pf1 is the next 8 bits and pf2 the last 8 bits ending at the center of the screen
+; currently, the zero index of these tables are never used; we never render zero width chunks of platform, no matter how far away the platform bit is
 
 pf0lookup
 		dc.b #%00000000
@@ -1077,49 +1092,6 @@ platformcolors
                 .byte %11101000, %11101000, %11101001, %11101001, %11101010, %11101010, %11101011, %11101011
                 .byte %11101100, %11101100, %11101101, %11101101, %11101110, %11101110, %11101111, %11101111
 
-
-;
-; perspectivetable
-;
-
-perspectivetable
-
-; line widths
-; let's say all platforms are the same width... perhaps 20 to start with (since that's how many pixels
-; wide we can physically draw them)
-; projection for X is like Y:
-; projection: projected y = distance_of_"screen" * actual_y / distance_of_point
-; projected x (0-20) = distance_to_screen (eg, 4) * actual_x (always 20) / distance_of_point (0..127 or so, re-use distance from Y calc)
-; okay, tweaking variables to draw out the tail, even if it overflows early on
-
-; for my $x (1..128) {
-;     my $px = 4 * 40 / $x;
-;     $px = 20 if $px > 20;
-;     print int($px), ', ';
-; }
-
-		 dc.b 20, 20, 20, 20, 20, 20, 20, 20, 17, 16, 14, 13, 12, 11, 10, 10, 9, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
-
-;
-; level0
-;
-
-level0
-        ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers)
-        ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
-		dc.b 1, 11, $1e,  $e0
-		dc.b 20, 25, $14, $60
-		dc.b 30, 40, $18, $20
-		dc.b 0, 0, 0, 0 		;       end
-		dc.b 0, 0, 0, 0 		;       end
-
-
- 		dc.b $fe  ; light green
-		dc.b $5c  ; pink
-		dc.b $6c  ; light purple
-		dc.b $b8  ; blue-green
-
-
 ;
 ; background
 ;
@@ -1169,25 +1141,68 @@ background
 		.byte $84, $84, $84, $84, $84
 		.byte $84, $84, $84, $84, $84
 
-		.byte $82, $82, $82, $82, $82
+		.byte $82, $82, $82, $82, $82	; even darker sky
 		.byte $82, $82, $82, $82, $82
 		.byte $82, $82, $82, $82, $82
 		.byte $82, $82, $82, $82, $82
 
+		.byte $80, $80, $80, $80, $80	; darkest sky
 		.byte $80, $80, $80, $80, $80
 		.byte $80, $80, $80, $80, $80
 		.byte $80, $80, $80, $80, $80
-		.byte $80, $80, $80, $80, $80
-
-		.byte $02, $02, $02, $02, $02
-		.byte $02, $02, $02, $02, $02
-		.byte $02, $02, $02, $02, $02
-		.byte $02, $02, $02, $02, $02
 
 		.byte $00, $00, $00, $00, $00
 		.byte $00, $00, $00, $00, $00
 		.byte $00, $00, $00, $00, $00
 		.byte $00, $00, $00, $00, $00
+
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+		.byte $00, $00, $00, $00, $00
+
+;
+; perspectivetable
+;
+
+perspectivetable
+
+; line widths
+; let's say all platforms are the same width... perhaps 20 to start with (since that's how many pixels
+; wide we can physically draw them)
+; projection for X is like Y:
+; projection: projected y = distance_of_"screen" * actual_y / distance_of_point
+; projected x (0-20) = distance_to_screen (eg, 4) * actual_x (always 20) / distance_of_point (0..127 or so, re-use distance from Y calc)
+; okay, tweaking variables to draw out the tail, even if it overflows early on
+
+; for my $x (1..128) {
+;     my $px = 4 * 40 / $x;
+;     $px = 20 if $px > 20;
+;     print int($px), ', ';
+; }
+
+		 dc.b 19, 19, 19, 19, 19, 19, 19, 19, 17, 16, 14, 13, 12, 11, 10, 10, 9, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+
+;
+; level0
+;
+
+level0
+        ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers)
+        ; eg, this first one starts at 1, is 10 long, is 30 high, and points to the 1th entry in the colors table
+		dc.b 1, 11, $1e,  $e0
+		dc.b 20, 25, $14, $60
+		dc.b 30, 40, $18, $20
+		dc.b 0, 0, 0, 0 		;       end
+		dc.b 0, 0, 0, 0 		;       end
+
+
+ 		dc.b $fe  ; light green
+		dc.b $5c  ; pink
+		dc.b $6c  ; light purple
+		dc.b $b8  ; blue-green
+
+
 
 
 ;
