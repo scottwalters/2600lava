@@ -23,7 +23,7 @@ tmp1	ds 1
 tmp2	ds 1
 
 NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
-scanline = tmp1
+; scanline = tmp1 XXX
 
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
@@ -287,10 +287,9 @@ startofframe
 		; sta PF1
 		; sta PF2
 
-		lda #viewsize			; indexes the view table and is our scanline counter
-		sta scanline
+		ldy #viewsize			; indexes the view table and is our scanline counter
 
-		lda playery				; 1/4 playery for picking background color for shaded sky/earth
+		lda playery				; 1/4th playery for picking background color for shaded sky/earth
 		lsr
 		lsr
 		sta tmp2
@@ -302,47 +301,59 @@ platforms
 
 ; high bit or something should indicate a bit of sprite
 ; we get 22 cycles before drawing starts, and then 76 total for the scan line
-; XXX try using a memory variable as our scanline counter to free up Y for unloading data quick before draw starts
+; if we take out the wsync, we have 7 cycles left; that's enough to copy sprite data from a pre-computed table, but we already use all of our RAM.  argh.
 
-		sta WSYNC			; +2   72
-		sty COLUBK			; +3    3
-		sta COLUPF			; +3    6 
+		sta WSYNC			; +3   72
+		stx COLUBK			; +3    3
+		tsx					; +2    5
+		stx COLUPF			; +3    8
 
-		lda view,x			; +4   10
-		and #%00011111		; +2   12
-		tax					; +2   14
-		lda pf0lookup,x		; +4   18
-		sta PF0				; +3   21
-		lda pf1lookup,x		; +4   25
-		sta PF1				; +3   28 .... XXXX this one happens too late
-		lda pf2lookup,x		; +4   32
-		sta PF2				; +3   35
+		tax					; +2   10
+		lda pf0lookup,x		; +4   14
+		sta PF0				; +3   17 ... this needs to happen sometime on or before cycle 22
+		lda pf1lookup,x		; +4   21
+		sta PF1				; +3   24 ... this needs to happen some time before cycle 28; cycle 24 is working
+		lda pf2lookup,x		; +4   28
+		sta PF2				; +3   31
 
 renderpump
 
 		; get COLUPF, COLUBK, and scanline values ready to roll
-		lda scanline		; +3    38  get value for COLUBK ready in Y
-		adc tmp2			; +3    41
-		tax					; +2    43
-		ldy background,x	; +4    47
 
-		ldx scanline		; +2    50    get value for COLUPF ready in A
-		lda view,x			; +4    54
-		tax					; +2    56
-		lda platformcolors,x; +4    60
+		; get value for COLUPF ready in S
+		lda view,y			; +4    
+		tax					; +2   
+		lda platformcolors,x; +4    
+		tax					; +2
+		txs					; +2   45
 
-		ldx scanline		; +3   63    get scanlineindex 
-		
-		dec scanline		; +5   68   yowch... 
-        bne platforms		; +3   71
+        ; get value for COLUBK ready in X
+		tya					; +2
+		adc tmp2			; +3    
+		tax					; +2    
+		lda background,x	; +4    
+		tax					; +2    58
+
+		; get the pf*lookup index ready in A
+		lda view,y			; +4   
+		and #%00011111		; +2    64
+
+		dey					; +2    66
+        bne platforms		; +3    69
 
 
 ;
 ; debugging output (a.k.a. score)
 ;
 
+		; re-adjust after platform rendering
+		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the plast platform line
+		ldx #$ff			; we use the S register as a temp so restore it to the good stack pointer value of top level execution
+		txs
+		; black to a back background
 		lda #$00
 		sta COLUBK
+
 score
 		sta WSYNC
 		lda #0
