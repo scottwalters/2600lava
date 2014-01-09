@@ -23,7 +23,7 @@ tmp1	ds 1
 tmp2	ds 1
 
 NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
-; scanline = tmp1 XXX
+scanline = tmp1 
 
 ; level render
 ; these must be persistent between calls to platresume so the routine can pause and resume
@@ -288,6 +288,7 @@ startofframe
 		; sta PF2
 
 		ldy #viewsize			; indexes the view table and is our scanline counter
+		sty scanline
 
 		lda playery				; 1/4th playery for picking background color for shaded sky/earth
 		lsr
@@ -301,45 +302,47 @@ platforms
 
 ; high bit or something should indicate a bit of sprite
 ; we get 22 cycles before drawing starts, and then 76 total for the scan line
-; if we take out the wsync, we have 7 cycles left; that's enough to copy sprite data from a pre-computed table, but we already use all of our RAM.  argh.
+; 69 cycles; if we take out the wsync, we have 7 cycles left; that's enough to copy sprite data from a pre-computed table, but we already use all of our RAM.  argh.
+; 62 cycles!  14 cycles to spare.
 
-		sta WSYNC			; +3   72
-		stx COLUBK			; +3    3
-		tsx					; +2    5
-		stx COLUPF			; +3    8
+		sta WSYNC			; +3   62
+		sty COLUPF			; +3    3
 
-		tax					; +2   10
-		lda pf0lookup,x		; +4   14
-		sta PF0				; +3   17 ... this needs to happen sometime on or before cycle 22
-		lda pf1lookup,x		; +4   21
-		sta PF1				; +3   24 ... this needs to happen some time before cycle 28; cycle 24 is working
-		lda pf2lookup,x		; +4   28
-		sta PF2				; +3   31
+		tay					; +2    5
+		lda background,y	; +4    9
+		sta COLUBK			; +3   12
 
+		lda pf0lookup,x		; +4   16
+		sta PF0				; +3   19 ... this needs to happen sometime on or before cycle 22
+		lda pf1lookup,x		; +4   23
+		sta PF1				; +3   26 ... this needs to happen some time before cycle 28; cycle 24 is working
+		lda pf2lookup,x		; +4   30
+		sta PF2				; +3   33
 renderpump
 
 		; get COLUPF, COLUBK, and scanline values ready to roll
 
-		; get value for COLUPF ready in S
-		lda view,y			; +4    
-		tax					; +2   
-		lda platformcolors,x; +4    
-		tax					; +2
-		txs					; +2   45
+; to shave a few cycles and minimize moving things around, try to put the pf*lookup index into S instead, and COLUPF in A?  nope.
+; would it be faster to put scanline back into RAM rather than trying to use S?
 
-        ; get value for COLUBK ready in X
-		tya					; +2
-		adc tmp2			; +3    
-		tax					; +2    
-		lda background,x	; +4    
-		tax					; +2    58
+		ldy scanline		; +3   36
 
-		; get the pf*lookup index ready in A
-		lda view,y			; +4   
-		and #%00011111		; +2    64
+		; get value for COLUPF ready in Y
+		lax view,y			; +4   40 
+		ldy platformcolors,x; +4   44
 
-		dey					; +2    66
-        bne platforms		; +3    69
+		; get the pf*lookup index ready in X
+		and #%00011111		; +2   46
+		tax					; +2   48
+
+        ; get value for COLUBK somewhat setup in A
+		lda scanline		; +3   51
+		adc tmp2			; +3   54
+
+		dec scanline		; +5    59
+        bne platforms		; +3    62
+
+renderdone
 
 
 ;
