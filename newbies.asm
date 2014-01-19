@@ -81,7 +81,26 @@ flap_y		= %01111111;
 		lda deltay
 		_absolute
 		sta tmp2				; tmp2 has abs(deltay)
+
+		;  stuff the case where deltaz = deltay
+		; also stuff the case where deltaz = 0
+		cmp deltaz
+		bne .platlinedeltago	; branch on the normal case where deltaz != deltay
+.platlinedeltastuff0
+		; deltaz = deltay or deltaz = 0; stuff the return value to be the very top or very bottom scanline, depending
+		bit deltay
+		bpl .platlinedeltastuff1
+		; platform is above us
+		lda #[viewsize - 1]
+        jmp .platarctan9
+.platlinedeltastuff1
+		; platform is below us
+		lda #0
+		jmp .platarctan9
+
+.platlinedeltago
 		lda deltaz
+		beq .platlinedeltastuff0
 		sec
 		sbc tmp2
 		sta tmp1				; tmp1 has deltaz - abs(deltay)
@@ -546,20 +565,17 @@ platfound
 platrenderline
 
 		; if deltay > deltaz, this bit of the platform isn't visible
+		; eg, for the first platform, deltaz does 8,7,6,5,4,3,2 and deltay is 2
 		; since we render back to front, we know the rest of the platform isn't visible either, so stop rendering this one and go to the next
 		; this logic avoids the relatively expensive call to arctan
 		; update, if deltay = deltaz, we want to render one last bit of platform at the very top/bottom of the screen in this case
 		; previous platform lines plotted to the screen will get connected to it
 		lda deltay
 		_absolute
-		sec
-		sbc deltaz
-		; bpl platnext
+		cmp deltaz
 		bmi platrenderline1
-		bne platrenderline2
-		jmp platlastline		; we want to do this if deltay = deltaz
-platrenderline2
-		jmp platnext			; and we want to do this if deltay > deltaz
+		beq platrenderline1
+		jmp platnext			; do this if deltay > deltaz
 platrenderline1
 
 		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
@@ -588,38 +604,25 @@ platnextline
 
 		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
-		; handle deltaz=0 with a stuffed call to _plotonscreen; handle a deltaz=-1 with a jmp to platnext
+		; deltaz = 0 is okay; stop on deltaz < 0
 		lda deltaz
-		beq platlastline ; on deltaz=0, render one last platform bit at the very top or bottom of the screen
-		bmi platnextline1		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
+		bmi platnextline2		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
 
+		; stop rendering the platform at the start of the platform if the start of the platform is in front of us (otherwise the above deltaz check will catch it)
+		ldy curplat
 		lda level0,y			; don't take deltaz below level0+0,y - playerz; aka, stop when we reach the start of the platform
 		sec
 		sbc playerz
-		bmi platnextline0a		; branch if the start of the platform is behind us; taking deltaz to all the way down to 1 is fine in that case
-		cmp deltaz				; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
-		bpl platnextline1		; deltaz not larger than level0,y - playerz; go to the next platform; springboard since we're too far away for a relative jump
-platnextline0a
-		jmp platrenderline		; otherwise loop back to render the next line of this platform; too far away for a relative branch
-
-platlastline
-		; do one last plotonscreen to the very top or very bottom scanline
-		; when a bit of platform is detected that's just off the screen (deltaz = 0 or deltaz = deltay), control is sent here
-		; control is sent from here to the middle of the render pipeline
-		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
-		tay						; Y contains the distance to the platform, ready for _plotonscreen to read
-		; handle the separate cases of the platform above us and the platform below us
-		bit deltay
-		bpl platlastline2
-		; platform is above us
-		ldx #[viewsize - 1]
-		jmp do_plotonscreen
+		bpl platnextline1		; continue this check if the start of the platform is in front of us; if the platform is behind us, then this check doesn't make sense so continue rendering
+		jmp platrenderline		; too far for a relative branch
 platnextline1
+		sec
+		sbc #1
+		cmp deltaz				; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
+		bpl platnextline2		; deltaz smaller than or equal to level0,y - playerz - 1; go to the next platform
+		jmp platrenderline		; go on to render the next line with our newly dec'd deltaz; too far for a relative branch
+platnextline2
         jmp platnext
-platlastline2
-		; platform is below us
-		ldx #0
-		jmp do_plotonscreen
 
 ;
 ; timer
