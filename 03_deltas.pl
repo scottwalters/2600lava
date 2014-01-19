@@ -109,22 +109,4 @@ run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerenda
 is $cpu->get_pc, $symbols->platnext + 2;
 isnt $cpu->get_pc, $symbols->platrenderline + 2;
 
-
-# this is running far too long:
-#
-# $cpu->write_8( $symbols->playerz, 0x00 );
-# $cpu->write_8( $symbols->playery, 0x20 );
-# 
-# my $level0 = $symbols->level0 or die;
-# for my $sym (
-#         1, 11, $1e,  $e0,
-#         20, 25, $14, $60,
-#         30, 40, $18, $20,
-#         0, 0, 0, 0,
-# ) {
-#     $cpu->write_8( $level0++, $sym );
-# }
-
-
-
 done_testing();
