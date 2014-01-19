@@ -82,6 +82,13 @@ flap_y		= %01111111;
 		_absolute
 		sta tmp2				; tmp2 has abs(deltay)
 
+; XXXXXX in .platlinedelta, maybe we need to first stuff case of the deltay = 0 before we look at other stuffed cases
+; I thought we *were* stuffing that case... oh yeah, we were, but then the details of the arctan table changed so that we didn't have to,
+; and then with this recent bit of stuff here, we broke that deltay = deltaz = 0 handling (where the table came back with 0), so really
+; we need to un-stuff or else re-stuff the situation where Y=0
+; XXXX if we stuff Y=0, we can start the arctangent table on Y=1 for a little more precision
+
+
 		;  stuff the case where deltaz = deltay
 		; also stuff the case where deltaz = 0
 		cmp deltaz
@@ -573,6 +580,7 @@ platrenderline
 		lda deltay
 		_absolute
 		cmp deltaz
+; XXXXX single stepping through this with deltaz = deltay = 0 where it keeps rendering the 0 platform over and over and can't break out; right here, the neg flag is not set, of course, but it is equal so the beq jumps to platrenderline1 which should be fine
 		bmi platrenderline1
 		beq platrenderline1
 		jmp platnext			; do this if deltay > deltaz
@@ -597,32 +605,41 @@ platnextline
 		lda INTIM
 		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
 		; cmp #6
-		cmp #7
+		; OOOh.  the bmi is happening because INTIM is so large that INTIM - 7 still has bit 7 set.  it didn't wrap past 0, it just started and stayed > 127. XXX
+		bmi platnextline0		; if INITM is currently > 127, we have lots of time left on the clock; we can't subtract a small number and check the 7 bit; the 7 bit will stay set; this is a bug fix
+		cmp #8					; if INTIM is currently <= 127, then we can subtract a small number and see if it wrapped past zero
 		bmi vblanktimerendalmost
+platnextline0
 
 		; inc num0				; XXX counting how many platform lines we render in a frame
 
 		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
 		; deltaz = 0 is okay; stop on deltaz < 0
+		bmi platnextline3		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
 		lda deltaz
-		bmi platnextline2		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
 
-		; stop rendering the platform at the start of the platform if the start of the platform is in front of us (otherwise the above deltaz check will catch it)
+		; for platforms that start in front of us, only draw them back to the point where they start
+		; if the start of the platform is behind us, then the deltaz check above will catch that so don't worry about that case
 		ldy curplat
-		lda level0,y			; don't take deltaz below level0+0,y - playerz; aka, stop when we reach the start of the platform
+		lda level0,y			; don't take deltaz below level0+0,y - playerz; aka, stop when deltaz reaches the start of the platform
 		sec
 		sbc playerz
-		bpl platnextline1		; continue this check if the start of the platform is in front of us; if the platform is behind us, then this check doesn't make sense so continue rendering
-		jmp platrenderline		; too far for a relative branch
-platnextline1
+		beq platnextline2		; we're exactly standing on the start of this platform so we don't need to do this deltaz test
+		bmi platnextline2		; this test doesn't make sense if the platform starts behind us; if deltaz went < 0, the above test would have caught it, so just continue rendering
+		; platform is in front of us; A has how many units ahead the platform is; we want to make sure that deltaz >= that
+		; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
 		sec
-		sbc #1
-		cmp deltaz				; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
-		bpl platnextline2		; deltaz smaller than or equal to level0,y - playerz - 1; go to the next platform
-		jmp platrenderline		; go on to render the next line with our newly dec'd deltaz; too far for a relative branch
-platnextline2
+		sbc deltaz				
+		bmi platnextline2		; branch to do the next line if deltaz > ( level0,y - playerz )
+		beq platnextline2		; branch to do the next line if deltaz = ( level0,y - playerz )
+		; don't walk off of the beginning of the platform; fall through to platnext if deltaz < ( level0,y - playerz )
+
+platnextline3
         jmp platnext
+
+platnextline2
+		jmp platrenderline		; if deltaz is larger than level0,y - playerz - 1, then go on to render the next line with our newly dec'd deltaz; too far for a relative branch
 
 ;
 ; timer
