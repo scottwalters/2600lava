@@ -70,7 +70,7 @@ flap_y		= %01111111;
 ; takes deltaz and deltay
 ; index the arctan table with four bits of each delta
 ; we use the most significant non-zero four bits of each delta
-; the arctan table is indexed by the ratio of the y and z deltas
+; the arctangent table is indexed by the ratio of the y and z deltas
 ; this means we can scale the values up to get more precision as long as we scale them up together
 ; we shift right up to four times until ( deltay | delta ) <= 0x0f
 ; deltaz is in tmp1 and deltay is in tmp2 where they get shifted to the right
@@ -562,12 +562,6 @@ platrenderline
 
 		_plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
-;		debugging; are we still getting zero width platform segments that chew up CPU?  looks like not
-;		cmp #0
-;	 	bne testtesttest
-;		inc num0		; testing XXXX... how many of these zero width platforms are we seeing each frame?  up to $24.  a lot.
-; testtesttest
-
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
@@ -976,13 +970,14 @@ distancemods
 ; arctangent
 ;
 
-; atan(x/y) normalized to between 0 and 50
-; $x and $y are 1..16, print int(rad2deg(atan($x/$y))*0.57)||0, "," 
-; here, "25" corresponds to a 45 degree angle, I guess
-; XXX I guess that means that half this table is never used... should optimize it better
+; atan(x/y) normalized to between 0 and #(viewsize/2)
+; $x and $y are 0..15
 
-; increasing Y values go across, increasing Z values go down -- no, backwards... so confused... increasing Z should move lines towards middle of screen though
-; lines with more Z than Y never get displayed anyway
+; this table is indexed by two nibbles.
+; the high nibble is indexed by deltay.
+; the low nibble is indexed by deltaz-deltay.
+; since deltay is never (much) larger than deltaz, we don't need to store cases in the table where deltay > deltaz.
+; subtracting deltaz out of deltaz first gives us more precision for things off in the distance.
 
 ;   Y  Z-->
 ;   |
@@ -996,15 +991,18 @@ distancemods
 ;
 ; use Math::Trig;
 ; my $scanlines = 112;
+; my $max = ( $scanline % 2 ) ? int( $scanlines / 2 ) : int(( $scanlines - 1 ) / 2); # if $scanlines is even, make it odd
 ; my $field_of_view_in_angles = 90;
 ; my $multiplier = $scanlines / $field_of_view_in_angles;
 ; for my $y (0..15) {
-;    my @z = $y+1 .. $y+16;
+;    # my @z = $y+1 .. $y+16;
+;    my @z = $y .. $y+15;
 ;    print "\t\t; z = @{[ join ', ', @z ]}\n";
 ;    print "\t\tdc.b ";
 ;    for my $z (@z) {
-; #       if( $z == 0 ) { print '%0000000, '; next; }
+;          if( $z == 0 ) { print '%0000000, '; next; }
 ;          my $angle = int(rad2deg(atan($y/$z))*$multiplier);
+;          $angle = $max if $angle > $max;
 ;          print $angle;
 ;          print ", " if $z != $z[-1];
 ;    }
