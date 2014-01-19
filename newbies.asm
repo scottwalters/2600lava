@@ -204,6 +204,8 @@ flap_y		= %01111111;
 ; uses tmp1 during the call to remember the new lastline
 ; this macro is used in three different places; okay, it's only used in one place with fatlines disabled but we're trying to add gap filling logic
 
+; XXX instead of sticking Y (distance) into tmp2 to remember it, hold the current color in tmp2
+
 		MAC _plotonscreen
 .plotonscreen1
 
@@ -216,11 +218,11 @@ flap_y		= %01111111;
 		beq .plotonscreen8		; then do nothing
 
 .plotonscreen2a
-		ldy tmp2				; restore our original Y argument; we need this for after we recurse back in
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
 		bpl .plotonscreen4		; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
+
 .plotonscreen3
 		; actually plot this line on the screen
 		ldy tmp2				; restore our original Y argument
@@ -229,14 +231,19 @@ flap_y		= %01111111;
 		ldy curplat				; unless we save and restore Y, this trashes Y which prevents recursion
 		ora level0+3,y			; add the platform color (level0 contains records of:  start position, length, height, color)
 		sta view,x				; draw to the framebuffer
-.plotonscreen4
-		; experimental:  do some gap filling
-		lda lastline			; make sure that there is a lastline and don't try to fill gaps if not
-		beq .plotonscreen8		; branch if there is no lastline
 
-		lda SWCHB
-		and #%00000010			; select switch
-		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
+.plotonscreen4
+		; figure out if we want to fill in the gap from here to the last line we drew
+		lda lastline			; make sure that there is a lastline and don't try to fill gaps if not
+		beq .plotonscreen8		; skip gap filling if there is no lastline
+
+;		lda SWCHB
+;		and #%00000010			; select switch
+;		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
+
+		lda INTIM
+		cmp #8
+		bmi .plotonscreen8		; XXX experimental; running low on CPU time remaining also disables filling in gaps; hey, this works great, except for, you know, the gaps
 
 		txa
 		sec
@@ -245,6 +252,8 @@ flap_y		= %01111111;
 		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out; don't overwrite a narrow line with a fatter line
 		cmp #$ff
 		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out; don't overwrite a narrow line with a fatter line
+
+		ldy tmp2				; restore our original Y argument; we need this to recurse back in
 		cmp #0
 		bmi .plotonscreen6		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
 .plotonscreen5
@@ -253,8 +262,9 @@ flap_y		= %01111111;
 		jmp .plotonscreen2a		; recurse back in
 .plotonscreen6
 		inc num0				; XXXX count how many lines we fill in
-		inx
+		inx						; drawing upwards relative last plot
 		jmp .plotonscreen2a		; recurse back in
+
 .plotonscreen8
 		lda tmp1				; after we're done recursing to fill in the gaps, update lastline
 		sta lastline
