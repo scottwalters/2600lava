@@ -186,7 +186,7 @@ flap_y		= %01111111;
 		beq .plotonscreen8		; then do nothing
 
 .plotonscreen2a
-		ldy tmp2				; restore our original Y argument XXX just added this to fix a bug; needed for one code path
+		ldy tmp2				; restore our original Y argument; we need this for after we recurse back in
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
@@ -218,7 +218,7 @@ flap_y		= %01111111;
 		cmp #0
 		bmi .plotonscreen6		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
 .plotonscreen5
-		inc num0				; XXXX count how many lines we fill in XXXXXXXXXXXXXXXXX upwards of $28... waay too many... not nearly that many lines on the screen
+		inc num0				; XXXX count how many lines we fill in 
 		dex						; drawing downwards relative last plot; step back up one line and draw there
 		jmp .plotonscreen2a		; recurse back in
 .plotonscreen6
@@ -548,24 +548,32 @@ platrenderline
 		; if deltay > deltaz, this bit of the platform isn't visible
 		; since we render back to front, we know the rest of the platform isn't visible either, so stop rendering this one and go to the next
 		; this logic avoids the relatively expensive call to arctan
-		; arctan returns negative to indicate this same condition; of this logic works, that logic could be removed
+		; update, if deltay = deltaz, we want to render one last bit of platform at the very top/bottom of the screen in this case
+		; previous platform lines plotted to the screen will get connected to it
 		lda deltay
 		_absolute
 		sec
 		sbc deltaz
-		bpl platnext
+		; bpl platnext
+		bmi platrenderline1
+		bne platrenderline2
+		jmp platlastline		; we want to do this if deltay = deltaz
+platrenderline2
+		jmp platnext			; and we want to do this if deltay > deltaz
+platrenderline1
 
-		_arctan					;		jsr platlinedelta ; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
 		; bmi platnext			; negative return value indicates that the angle is steeper than our field of view; since we're working backwards from the end of the platform towards ourselves, we know we won't be able to see any lines closer to us if we can't see this one, so just skip to platnext; we seem to be avoiding this situation currently so commenting this check out for now
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
-		_plathypot				; jsr plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
-		_plotonscreen			; jsr plotonscreen; Y gets the distance away/platform line width, X gets the scanline to draw at
+do_plotonscreen
+		_plotonscreen			; Y gets the distance away/platform line width, X gets the scanline to draw at
 		; fall through to platnextline
 
 platnextline
@@ -576,25 +584,42 @@ platnextline
 		cmp #7
 		bmi vblanktimerendalmost
 
-		; inc num0				; XXXX counting how many platform lines we render in a frame
+		; inc num0				; XXX counting how many platform lines we render in a frame
 
 		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
+		; handle deltaz=0 with a stuffed call to _plotonscreen; handle a deltaz=-1 with a jmp to platnext
 		lda deltaz
-		cmp #2					; don't take deltaz below 1
-		bmi platnextline1		; branch to platnext to start in on the next platform if we've walked backwards past the players position for this platform
+		beq platlastline ; on deltaz=0, render one last platform bit at the very top or bottom of the screen
+		bmi platnextline1		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
 
-		lda level0,y			; don't take deltaz below level0+0,y - playerz
+		lda level0,y			; don't take deltaz below level0+0,y - playerz; aka, stop when we reach the start of the platform
 		sec
 		sbc playerz
 		bmi platnextline0a		; branch if the start of the platform is behind us; taking deltaz to all the way down to 1 is fine in that case
 		cmp deltaz				; start of the platform is somewhere in front of us; deltaz should not count down to closer then the relative platform start; we want deltaz to be larger
-		bpl platnextline1		; deltaz not larger than level0,y - playerz; go to the next platform
+		bpl platnextline1		; deltaz not larger than level0,y - playerz; go to the next platform; springboard since we're too far away for a relative jump
 platnextline0a
-
 		jmp platrenderline		; otherwise loop back to render the next line of this platform; too far away for a relative branch
+
+platlastline
+		; do one last plotonscreen to the very top or very bottom scanline
+		; when a bit of platform is detected that's just off the screen (deltaz = 0 or deltaz = deltay), control is sent here
+		; control is sent from here to the middle of the render pipeline
+		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+		tay						; Y contains the distance to the platform, ready for _plotonscreen to read
+		; handle the separate cases of the platform above us and the platform below us
+		bit deltay
+		bpl platlastline2
+		; platform is above us
+		ldx #[viewsize - 1]
+		jmp do_plotonscreen
 platnextline1
-		jmp platnext			; too far away for a relative branch
+        jmp platnext
+platlastline2
+		; platform is below us
+		ldx #0
+		jmp do_plotonscreen
 
 ;
 ; timer
@@ -653,7 +678,7 @@ readsticka
 		dec playery ; XXX testing
 readstickb
 		lda playery
-		; sta num0 ; XXXXX
+		; sta num0 ; XXXX
 readstick5
 		; bit 2 = left
 		txa
@@ -991,18 +1016,18 @@ distancemods
 ;
 ; use Math::Trig;
 ; my $scanlines = 112;
-; my $max = ( $scanline % 2 ) ? int( $scanlines / 2 ) : int(( $scanlines - 1 ) / 2); # if $scanlines is even, make it odd
+; my $max = int($scanlines / 2); $max-- if(( $scalines & 0b01) == 0);
 ; my $field_of_view_in_angles = 90;
 ; my $multiplier = $scanlines / $field_of_view_in_angles;
 ; for my $y (0..15) {
-;    # my @z = $y+1 .. $y+16;
-;    my @z = $y .. $y+15;
+;    my @z = $y+1 .. $y+16;
+;    # my @z = $y .. $y+15; # we lose a significant amount of detail this way
 ;    print "\t\t; z = @{[ join ', ', @z ]}\n";
 ;    print "\t\tdc.b ";
 ;    for my $z (@z) {
 ;          if( $z == 0 ) { print '%0000000, '; next; }
 ;          my $angle = int(rad2deg(atan($y/$z))*$multiplier);
-;          $angle = $max if $angle > $max;
+;          $angle = $max if $angle > $max; # with the above, this never happens; we're about 3 away from either bound!
 ;          print $angle;
 ;          print ", " if $z != $z[-1];
 ;    }
@@ -1022,36 +1047,35 @@ arctangent
                 ; z = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
                 dc.b 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0; y = 0
                 ; z = 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
-                dc.b 33, 22, 17, 14, 11, 10, 8, 7, 7, 6, 5, 5, 5, 4, 4, 4; y = 1
+                dc.b 32, 22, 17, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 4, 4, 4; y = 1
                 ; z = 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
-                dc.b 41, 33, 27, 22, 19, 17, 15, 14, 12, 11, 10, 10, 9, 8, 8, 7; y = 2
+                dc.b 41, 32, 26, 22, 19, 17, 15, 13, 12, 11, 10, 9, 9, 8, 8, 7; y = 2
                 ; z = 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
-                dc.b 45, 38, 33, 28, 25, 22, 20, 18, 17, 16, 15, 14, 13, 12, 11, 11; y = 3
+                dc.b 45, 37, 32, 28, 25, 22, 20, 18, 17, 15, 14, 13, 12, 12, 11, 10; y = 3
                 ; z = 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-                dc.b 48, 41, 37, 33, 29, 27, 24, 22, 21, 19, 18, 17, 16, 15, 14, 14; y = 4
+                dc.b 47, 41, 36, 32, 29, 26, 24, 22, 20, 19, 18, 17, 16, 15, 14, 13; y = 4
                 ; z = 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
-                dc.b 49, 44, 39, 36, 33, 30, 28, 26, 24, 22, 21, 20, 19, 18, 17, 16; y = 5
+                dc.b 48, 43, 39, 35, 32, 29, 27, 25, 24, 22, 21, 20, 18, 18, 17, 16; y = 5
                 ; z = 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
-                dc.b 50, 45, 41, 38, 35, 33, 30, 28, 27, 25, 24, 22, 21, 20, 19, 18; y = 6
+                dc.b 49, 45, 41, 37, 34, 32, 30, 28, 26, 25, 23, 22, 21, 20, 19, 18; y = 6
                 ; z = 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
-                dc.b 51, 47, 43, 40, 37, 35, 33, 31, 29, 27, 26, 25, 24, 22, 21, 21; y = 7
+                dc.b 50, 46, 42, 39, 36, 34, 32, 30, 28, 27, 25, 24, 23, 22, 21, 20; y = 7
                 ; z = 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
-                dc.b 51, 48, 44, 41, 39, 37, 34, 33, 31, 29, 28, 27, 25, 24, 23, 22; y = 8
+                dc.b 50, 47, 44, 41, 38, 36, 34, 32, 30, 29, 27, 26, 25, 24, 23, 22; y = 8
                 ; z = 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
-                dc.b 52, 48, 45, 43, 40, 38, 36, 34, 33, 31, 30, 28, 27, 26, 25, 24; y = 9
+                dc.b 51, 48, 45, 42, 40, 37, 35, 34, 32, 30, 29, 28, 27, 26, 25, 24; y = 9
                 ; z = 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
-                dc.b 52, 49, 46, 44, 41, 39, 37, 36, 34, 33, 31, 30, 29, 28, 27, 26; y = 10
+                dc.b 51, 48, 45, 43, 41, 39, 37, 35, 33, 32, 31, 29, 28, 27, 26, 25; y = 10
                 ; z = 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
-                dc.b 52, 50, 47, 45, 42, 40, 39, 37, 35, 34, 33, 31, 30, 29, 28, 27; y = 11
+                dc.b 51, 49, 46, 44, 42, 40, 38, 36, 35, 33, 32, 31, 30, 29, 28, 27; y = 11
                 ; z = 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
-                dc.b 53, 50, 48, 45, 43, 41, 40, 38, 37, 35, 34, 33, 31, 30, 29, 28; y = 12
+                dc.b 52, 49, 47, 45, 43, 41, 39, 37, 36, 34, 33, 32, 31, 30, 29, 28; y = 12
                 ; z = 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29
-                dc.b 53, 50, 48, 46, 44, 42, 41, 39, 38, 36, 35, 34, 33, 31, 30, 30; y = 13
+                dc.b 52, 50, 47, 45, 43, 42, 40, 38, 37, 36, 34, 33, 32, 31, 30, 29; y = 13
                 ; z = 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
-                dc.b 53, 51, 49, 47, 45, 43, 41, 40, 38, 37, 36, 35, 34, 33, 32, 31; y = 14
+                dc.b 52, 50, 48, 46, 44, 42, 41, 39, 38, 36, 35, 34, 33, 32, 31, 30; y = 14
                 ; z = 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
-                dc.b 53, 51, 49, 47, 45, 44, 42, 41, 39, 38, 37, 36, 35, 34, 33, 32; y = 15
-
+                dc.b 52, 50, 48, 46, 45, 43, 41, 40, 39, 37, 36, 35, 34, 33, 32, 31; y = 15
 
 ;
 ; platformcolors
