@@ -1,3 +1,30 @@
+x. we can't ever actually get on a platform; there's always a gap of sky/background below it
+   ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
+   ... arctangent needs to start with z=0 I guess
+       ... looks like we lose noticible precision that way; not sure
+   ... hard-code checks for when deltaz = 0 in plotonscreen to automatically clamp the line to the very top or bottom?
+       ... but not in plotonscreen; it doesn't take deltax/y; arctangent does
+       ... add a special path that skips _arctan and goes straight to plotonscreen when deltaz = 0
+           ... platrenderline does a jmp platnext if deltay > deltaz check
+           ... platnextline does jmp platnext if deltaz - 2 < 0 check
+           ... ugh, we know where to plot the platform bit (very top or bottom), but we don't know how wide to make it
+               ... need a hypot with z=0
+                   ... another small table perhaps, just of those?
+           ... also, _plotonscreen is a lot to inline, and it's only a macro right now
+               ... no problem, just branch back to it and treat deltaz=0 as one last go and deltaz<0 as done condition
+           ... we want to skip arctan but maybe not plathypot; distance away tells us fatness of line to draw
+    ... it might be easier to rig plotonscreen to clamp the line one way or the other if deltaz=deltay... or insert logic before the call to it 
+        ... and save the extra _plathypot macro call
+        ... we still want to stop looping when deltay > deltaz so we don't waste CPU
+        ... yup, works
+
+x. plotonscreen is kind of fucked; little changes (and new features) radically change what gets drawn when they're enabled/disabled
+   ... but unit tests aren't picking up on any differences in what gets plotted when branching to plotonscreen3a or plotonscreen8 is enabled when drawing to lastline
+   ... differences in what gets rendered seems to have been in the past largely influenced by run time and it running out of time to render things
+       ... things should be much better in that regard now so I'm not sure what's up
+
+x. use unit tests to figure out how long rendering takes in different circumstances.
+
 o. get some banding going for sky / horizon
    ... go into rarified air where it starts to get black and spacey at high levels
    ... maybe greenish ground instead of brown
@@ -331,11 +358,6 @@ o. rather than doing jsr/rts, just use one memory location as an index into a ju
 
 o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
-o. plotonscreen is kind of fucked; little changes (and new features) radically change what gets drawn when they're enabled/disabled
-   ... but unit tests aren't picking up on any differences in what gets plotted when branching to plotonscreen3a or plotonscreen8 is enabled when drawing to lastline
-   ... differences in what gets rendered seems to have been in the past largely influenced by run time and it running out of time to render things
-       ... things should be much better in that regard now so I'm not sure what's up
-
 o. _plathypot could probably be optimized
 
 o. try to get INTIM checks back to 7 or at least 8; up to 9 from 7 right now
@@ -349,6 +371,9 @@ o. let's turn this into a sort of freerunning first person platformer
    ... try to maintain altitude
    ... omg!  vines to swing on, pitfall style?
    ... "Sky Castles" ... sky castle theme... use a sprite to render off in the distance castleage
+   ... sometimes the user can flap a bit (mario style get a run for it and fly for a while), sometimes for a limited time they can fly around, sometimes only jump
+       ... some kinds of power ups or something; changing bodies?
+   ... philosophy:  create a machine that's fun to play with
 
 o. 2 bits for color is probably enough; the colors table already only has 4 entries
 
@@ -387,23 +412,43 @@ o. need to get sprite rendering going too
 o. maybe warp the tables and run two different kernels so that the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution while the middle still has one
    ... or else just double scanlines
 
-o. unit tests to make sure we plot a platform or two within a fixed number of cycles/instruction count so we know if we accidentally make it really slow again
-y
-
-o. we can't ever actually get on a platform; there's always a gap of sky/background below it
-   ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
-   ... platrenderline does a jmp platnext if deltay > deltaz check
-   ... arctangent needs to start with z=0 I guess
-       ... looks like we lose noticible precision that way; not sure
-   ... hard-code checks for when deltaz = 0 in plotonscreen to automatically clamp the line to the very top or bottom?
 
 o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
-
-o. use unit tests to figure out how long rendering takes in different circumstances.
 
 o. according to stella, we're on scanline 15 already by the time we start rendering the screen
 
 o. steal physics from flapping.20050207.asm?
 
 ... rendering in 72 cpu cycles now
+
+o. unit test cycle counts
+   ... unit tests to make sure we plot a platform or two within a fixed number of cycles so we know if we accidentally make it really slow again
+   ... get 04_runtime.pl going with per-instruction (typical) cycle counts 
+
+o. XXX when num0 (connected platform line gaps) hits 44 or something near that, the screen rolls
+    XXX it was shading things in just fine before with this being only 0F or so, tops, before we started gap filling to the screen edge
+    ... write tests to make sure that the deltay < deltaz check is working and we aren't wasting lots of CPU for no reason
+    ... observed num0 = 48
+    ... aha, this isn't happening because the comparison against TIM64 isn't large enough but because the check doesn't happen because of an infinite loop
+
+o. with the revised deltaz loop control (allowing deltaz=0 and deltaz = deltay), when deltay=deltaz=0, it'll keep rendering that platform over and over
+   ... platrenderline checks ( deltay <= deltaz ) work fine with deltaz = deltay = 0
+   ... .platlinedelta stuffing works; Y is positive so scanline gets stuffed as #0
+       XXX in .platlinedelta, maybe we need to first stuff case of the deltay = 0 before we look at other stuffed cases
+
+o. XXX plotonscreen *might* run into a spot of bother when arctan stuffs scanline to 0, and then 0 gets stored as lastline, so then it doesn't there to be a lastline
+   ... actually, that should be okay
+       ... after stuffing scanline to 0 or viewsize-1, plotonscreen shouldn't be called again
+       ... a lastline of 0 will just cause it to not try to do any gap filling, which is fine
+
+this was my commit message:
+fix a nasty INITM bug where we were subtracting a small number from a large number (eg 200 - 7) and then looking at the N flag, which was set (as bit 7 of the result i
+s set) and deciding that the result wrapped around to being negative when in reality it started and remained too large to be a signed 8 bit value.  d'oh.
+also, rework platnextline so that it's easier to follow.  I might go back and optimize it later but for now, explicitly handing < 0 and = 0 lets me get this straight i
+n my head.  I'm trying to figure out why the screen just goes black when we render a platform with deltay = 0 and deltaz = 0.
+I was suspecting an infinite loop, but 04_runtime.pl tells me that it does finish and in that not much more time, and the INTM 8 bit signed range bug explains why in t
+he debugger I never saw curplat go from 0 to 4 -- it just decided that it didn't have time to go.
+
+XXX worst case platform rendering takes 10729 cycles right now, which is a lot more than the 5320 available
+    XXX make sure we aren't rendering with deltay > deltaz again
 
