@@ -394,12 +394,16 @@ o. we can't ever actually get on a platform; there's always a gap of sky/backgro
    ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
    ... platrenderline does a jmp platnext if deltay > deltaz check
    ... arctangent needs to start with z=0 I guess
+       ... looks like we lose noticible precision that way; not sure
+   ... hard-code checks for when deltaz = 0 in plotonscreen to automatically clamp the line to the very top or bottom?
 
 o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
 
 o. use unit tests to figure out how long rendering takes in different circumstances.
 
 o. according to stella, we're on scanline 15 already by the time we start rendering the screen
+
+o. steal physics from flapping.20050207.asm?
 
 ... rendering in 72 cpu cycles now
 
