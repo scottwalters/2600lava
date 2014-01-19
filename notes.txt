@@ -15,6 +15,45 @@ la  lda #$53
 
 (one of many useful Raeto West tricks). 
 
+; before kernel
+LDX #$1F
+TXS
+...
+; in kernel
+CPY BallYPosition
+PHP
+PLA
+...
+; after kernel
+LDX #$FF
+TXS
+"The compare sets the bit (pushed) needed in the ENABL ($1F) register if I understand correctly."
+... from http://atariage.com/forums/topic/130990-anyone-think-ballblazer-is-possible-on-the-2600/page-9
+
+You don't have a scanline counter, do you?
+Else you could do:
+; assuming Y is the scanline counter, counting down
+  cpy M0end
+  rol
+  rol		 ; as long as Y is >= M0end, this results into bit 1 set.
+  sta ENAM0   ; 10 cycles
+... http://atariage.com/forums/topic/130990-anyone-think-ballblazer-is-possible-on-the-2600/page-9
+
+    What are best practises in sprite positioning?
+For positioning a sprite on the very right, either you position it on the very left with RESPx and then move it further left, or you position it very right with RESPx and the move it further right. 
+http://atariage.com/forums/topic/130990-anyone-think-ballblazer-is-possible-on-the-2600/page-22 and 21
+
+http://atariage.com/forums/topic/130990-anyone-think-ballblazer-is-possible-on-the-2600/page-10 ... music tuning
+
+Vertical Sync - 3 scanlines - 228 cycles
+Vertical blank - 37 scanlines - 2812 cycles
+Kernel - 192 scanlines - 14592 cycles
+Overscan - 30 scanlines - 2280 cycles
+Totals - 262 scanlines - 19912 cycles
+
+http://atariage.com/forums/topic/130990-anyone-think-ballblazer-is-possible-on-the-2600/page-22 has TIM64T values:
+#44 for vblank, #229 for display, #35 for overscan
+
 http://www.qotile.net/sequencer.html
 http://www.qotile.net/loopcart.html
 http://www.6502.org/source/ -- sort routines, string manip, conversions, math routines, sample apps
@@ -26,4 +65,10 @@ http://atariage.com/forums/topic/183085-bus-stuffing-like-the-graduate/
 http://www.atariage.com/2600/archives/schematics_tia/index.html
 http://www.bjars.com/disassemblies.html
 http://arctangent.net/atan.html
+http://www.alienbill.com/2600/basic/music/tune2600.html
 
+
+2600 Hard Drivin'
+2600 Ballblazer is in progress!
+2600 Katamari
+2600 Doom
