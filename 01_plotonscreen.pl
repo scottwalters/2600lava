@@ -33,6 +33,7 @@ sub run_cpu {
     });
 }
 
+my $view = $symbols->view;
 my $viewsize = 0xff - 2 - $view;
 
 #
@@ -207,7 +208,6 @@ is count_lines_drawn_by_color($expected_color_3), 7, "seven lines drawn with the
 
 sub count_lines_drawn {
     my $num = 0;
-    my $view = $symbols->view;
     for my $i ( 0 .. $viewsize - 1 ) {
         $num++ if $cpu->read_8( $view + $i );
     }
@@ -217,7 +217,6 @@ sub count_lines_drawn {
 sub count_lines_drawn_by_color {
     my $num = 0;
     my $color = shift;
-    my $view = $symbols->view;
     for my $i ( 0 .. $viewsize - 1 ) {
         my $line = $cpu->read_8( $view + $i );
         $num++ if $color == ( $line & 0b11100000 );
@@ -227,7 +226,6 @@ sub count_lines_drawn_by_color {
 
 
 sub dump_screen {
-    my $view = $symbols->view;
     for my $i ( 0 .. $viewsize - 1 ) {
         my $line = $cpu->read_8( $view + $i );
         diag sprintf "%03d (%02x) %08b\n", $i, $view+$i, $line;
