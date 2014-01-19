@@ -41,15 +41,16 @@ my $half_way_down_screen = int( $viewsize / 2 );
 
 use Math::Trig;
 my $field_of_view_in_angles = 90;
-my $multiplier = int( $viewsize / $field_of_view_in_angles );
+my $multiplier = $viewsize / $field_of_view_in_angles;
 sub scanline_according_to_perl {
     my $y = shift;
     my $z = shift;
     my $abs_y = abs $y;
     return $half_way_down_screen if $y == 0;
     my $angle = int(rad2deg(atan($abs_y/$z))*$multiplier);
-    diag "angle $angle";
-    return $y < 0 ? $half_way_down_screen - $angle : $half_way_down_screen + $angle;
+    # diag "angle $angle";
+    # return $y < 0 ? $half_way_down_screen - $angle : $half_way_down_screen + $angle; # the 6502 version flipped the framebuffer upside down
+    return $y < 0 ? $half_way_down_screen + $angle : $half_way_down_screen - $angle;
 }
 
 # deltay could be -127 to +127
@@ -87,7 +88,8 @@ for my $deltas (
     # my $truncated_scanline_according_to_perl = scanline_according_to_perl( $truncated_deltay, $truncated_deltaz );
     diag "truncated deltay $truncated_deltay truncated deltaz $truncated_deltaz";
     my $looked_up_arctan = $cpu->read_8( $symbols->arctangent + ( ( $truncated_deltay << 4 ) | $truncated_deltaz ) , $deltay );
-    my $half_way_down_screen_plus_looked_up_arctan = ( $half_way_down_screen + ( $deltay < 0 ? - $looked_up_arctan : $looked_up_arctan ) );
+    # my $half_way_down_screen_plus_looked_up_arctan = ( $half_way_down_screen + ( $deltay < 0 ? - $looked_up_arctan : $looked_up_arctan ) );
+    my $half_way_down_screen_plus_looked_up_arctan = ( $half_way_down_screen + ( $deltay < 0 ? $looked_up_arctan : - $looked_up_arctan ) ); # the 6502 version flipped the framebuffer upside down
     diag "looked_up_arctan + half_way_down_screen = $half_way_down_screen_plus_looked_up_arctan";
 
     if( $deltay < 0 ) {
