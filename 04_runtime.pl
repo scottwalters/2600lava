@@ -53,6 +53,8 @@ sub run_cpu {
 
 # init
 
+$cpu->write_8( $symbols->SWCHB, 0b00000010 ); # select switch off (apparently 0 indicates it is being pressed)
+
 my $level0 = $symbols->level0 or die;
 for my $sym (
         1, 11, 0x1e,  0xe0,
@@ -63,8 +65,7 @@ for my $sym (
     $cpu->write_8( $level0++, $sym );
 }
 
-$symbols->INTIM or die;
-$cpu->write_8( $symbols->INTIM, 30 );
+$cpu->write_8( $symbols->INTIM, 76 );
 
 my $cycles;
 
@@ -83,6 +84,7 @@ $cpu->write_8( $symbols->playery, 0x20 );
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
 diag $cycles;  # not really cycles; just an instruction count; currently 2807 ... yeah, that's a lot
+ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles (6144 cycles)'; # XXX double check this to make sure the figure is accurate
 
 # and another troublesome one:
 
@@ -93,6 +95,7 @@ $cpu->write_8( $symbols->playery, 0x1d );
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
 diag $cycles;  # 2773
+ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
 
 
 # and a made up one
@@ -104,6 +107,8 @@ $cpu->write_8( $symbols->playery, 0x10 );
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
 diag $cycles;  # 2113
+ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
+
 
 # starting view (looking out over a platform, with $39 = 57 bits of gap filled)
 
@@ -114,6 +119,8 @@ $cpu->write_8( $symbols->playery, 0x20 );
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
 diag $cycles;  # 2591
+ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
+
 
 # a view with only $0f gaps filled
 
@@ -124,6 +131,7 @@ $cpu->write_8( $symbols->playery, 0x18 );
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
 diag $cycles;  # 2267
+ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
 
 
 done_testing();
