@@ -203,21 +203,26 @@ flap_y		= %01111111;
 ; updates view[]
 ; uses tmp1 during the call to remember the new lastline
 ; this macro is used in three different places; okay, it's only used in one place with fatlines disabled but we're trying to add gap filling logic
-
-; XXX instead of sticking Y (distance) into tmp2 to remember it, hold the current color in tmp2
+; instead of sticking Y (distance) into tmp2 to remember it, hold the current color in tmp2
 
 		MAC _plotonscreen
 .plotonscreen1
 
-		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
-		sty tmp2				; remember our distance/line size figure
-.plotonscreen2
-
 		cpx lastline			; are we drawing on top of the last line we drew for this platform?
 		; beq .plotonscreen3a	; skip straight to drawing it if we're overwriting a platform of the same color; this won't be safe if multiple platforms on the level are the same color! XXX
-		beq .plotonscreen8		; then do nothing
+		beq .plotonscreen9		; then do nothing
 
-.plotonscreen2a
+		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
+
+
+; XXX fetch the current platform color and stash it in tmp2 then put tmp1 back into X
+		ldx curplat
+		lda level0+3,x
+		sta tmp2
+		ldx tmp1
+
+
+.plotonscreen2
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
@@ -225,11 +230,9 @@ flap_y		= %01111111;
 
 .plotonscreen3
 		; actually plot this line on the screen
-		ldy tmp2				; restore our original Y argument
 .plotonscreen3a
 		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
-		ldy curplat				; unless we save and restore Y, this trashes Y which prevents recursion
-		ora level0+3,y			; add the platform color (level0 contains records of:  start position, length, height, color)
+		ora tmp2				; add the platform color
 		sta view,x				; draw to the framebuffer
 
 .plotonscreen4
@@ -253,21 +256,20 @@ flap_y		= %01111111;
 		cmp #$ff
 		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out; don't overwrite a narrow line with a fatter line
 
-		ldy tmp2				; restore our original Y argument; we need this to recurse back in
 		cmp #0
 		bmi .plotonscreen6		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
 .plotonscreen5
 		inc num0				; XXXX count how many lines we fill in 
 		dex						; drawing downwards relative last plot; step back up one line and draw there
-		jmp .plotonscreen2a		; recurse back in
+		jmp .plotonscreen2		; recurse back in
 .plotonscreen6
 		inc num0				; XXXX count how many lines we fill in
 		inx						; drawing upwards relative last plot
-		jmp .plotonscreen2a		; recurse back in
+		jmp .plotonscreen2		; recurse back in
 
 .plotonscreen8
-		lda tmp1				; after we're done recursing to fill in the gaps, update lastline
-		sta lastline
+		ldx tmp1				; after we're done recursing to fill in the gaps, update lastline
+		stx lastline
 .plotonscreen9
 		ENDM
 
