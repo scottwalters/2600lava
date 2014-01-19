@@ -1,3 +1,41 @@
+o. get some banding going for sky / horizon
+   ... go into rarified air where it starts to get black and spacey at high levels
+   ... maybe greenish ground instead of brown
+   ... need to move padding to the top too to balance it out
+   ... add the players Y position to the 'background' table index
+   ... need to cap off players Y height otherwise the platforms start repeating and we run out of background material
+
+o. observed deltaz=0 while debugging shorter lines overwriting wider ones; maybe that's the problem?  if not, have to reproduce this view angle
+   ... playerz=0, playery=$23, 
+   ... this is likely gone now, fixed in dfab7f
+
+x. shouldn't be calling arctan with 0s for deltas since part of the formula the table is generated with is atan($z/$y)
+   ... calling it with two 0 deltas will make it run forever; okay, it handles this special case now, though I wish I didn't have to spend the CPU cycles
+       ... swapping Y and Z could avoid a division by zero if we stop following the platform when deltaz == 1, which we currently do
+   ... the way the table is computed and used now, Z will always be >= 1 and Y no longer needs a special case as the table handles it correctly
+   
+x. make the arctan table two pages long instead of one for more precision?
+   ... skipping this one as the 256 byte utilization instead of 128 byte seems pretty good
+
+x. write tests 
+   ... z-buffering -- drawing over stuff and failing to draw behind stuff
+   ... lastline being updated or not updated as appropriate
+   ... gap filling with correct color
+$cpu->set_pc($symbols->platlevelclear);
+$cpu->write_8( $symbols->deltaz, 10 );
+$cpu->write_8( $symbols->deltay, 2 );
+$cpu->write_8( $symbols->INTIM, 0x10 );  # stuff a value in the timer output so platform rendering doesn't think its out of time
+
+x. readstick isn't currently keeping Y from going below 0 and that trashes things as soon as it goes below 0
+    ... kinda in the process of reworking readstick and gamelogic
+    ... playery higher than $2c or so also keeps it from redrawing even if we go back down
+        ... huh, jsr'ing to platlevelclear instead of platresume in the first of three calls makes it able to recover
+    ... readstick now limits Y, and some serious bug thrashing seems to have cleared up the redraw and garbage problems
+
+x. the thing is currently rendering a lot of width 0 stuff; this gets drawn as nothing on the display; this is probably a fuck-up with the arctan lookup
+   operating without bounding
+   ... actually, the test was bunk; was testing the zero bit to test if A was zero, but it didn't match, so stats were off; actually doing no zero width platforms
+
 x. testing making no calls to platresume and that seems to be working pretty well; maybe I should do an experiment and have it count how many lines it does
     ... $0e or so.  not many.  okay, $14 with the first jsr platresume after the jsr platlevelclear enabled.  same ($14) with the 3rd platresume enabled.
     ... after add gap filling logic to plotonscreen to replace the fatlines logic, it is drawing fewer platforms but says $1C lines considered (28);
@@ -209,11 +247,31 @@ there are viewsize lines (currently 101)
 103-111 in score display itself
 112 in score display teardown
 
-...........
-
-maybe should have kept with X/Y rather than Y/Z
-
 ................
+
+o. 3D glasses support; use alternating sets of pf*lookup tables for left and right eyes
+
+o. I think the arctan Y=0 logic isn't working; platforms disappear entirely when they're dead center in middle of the screen
+   ... 02_arctan.pl thinks its working
+       ... still, wouldn't hurt to have more tests to make sure it actually gets rendered
+
+o. write more tests
+   ... need to test for more edge cases in plotonscreen
+       ... what happens when we try to plot something of the same width
+       ... what happens when gap filling tries to plot something with the same width as what's there
+           ... there's some resolution loss there; the perspectivetable table has 128 entries but line widths in it only does up to 20
+               XXX could improve the resolution if we had duplicate entries in pf*lookup and used all five bits (up to 31) 
+       ... what happens when we try to draw another line in the same platform on top of lastline
+   ... write a large scale test that calls platlevelclear
+       ... some of all of the three test platforms are drawn
+       ... they're drawn starting and ending on the display where they're supposed to be
+
+o. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
+   interpolate between them
+   ... XXX starts of platforms behind us will be rendered; have to take care in plotonscreen not to draw outside of the framebuffer!
+       ... ugh, do not want to deal with that... they can't be behind us.  can't do neg deltaz.  have to render in perspective.
+           ... so we have to clip the line.
+               ... let's maybe revisit this later.
 
 ; todo next: sprites.  nice thing about first person is we don't need to draw ourselves!  so we can realistically have
 ; two enemy birds flying around.  enemy birds are going need x, y, and at least one velocity.
@@ -232,12 +290,9 @@ maybe should have kept with X/Y rather than Y/Z
 
 ; todo: waves.  when the birds are dead, pause a moment, and create more!
 
-o. maybe rather than the platforms being solid colored, make the striped as in Atari 2600 - Demoscene - 02 - Ataventure - Atari 2600 demo by Kk Dma.mp4
-   also Atari 2600 - Demoscene - 04 - Trsi Digital Sounds System Crest - aTaRSI (2013) Atari Vcs.mp4 shades things darker when they're further away -- nice!
-   the background should also be shaded and colored
-
 o. bug: why won't it render the one platform when there is only one platform in the level?
    ... is it rendering all of the platforms right now?  haven't taken a close look at this
+   ... this antique bug probably went away by way of other changes
 
 o. DCP Plus demo shows how to use the Pitfall 2 custom hardware (supported by Stella, Harmony, and Melody) which has fast fetchers and overrides lda #xx! awesome!
     o. too bad it doesn't override sta instead =P
@@ -268,21 +323,7 @@ o. bcs gamelogic2      ; don't write back to playerz if this addition would take
 
 o. beq gamelogic4      ; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
 
-o. readstick isn't currently keeping Y from going below 0 and that trashes things as soon as it goes below 0
-    ... kinda in the process of reworking readstick and gamelogic
-    ... playery higher than $2c or so also keeps it from redrawing even if we go back down
-        ... huh, jsr'ing to platlevelclear instead of platresume in the first of three calls makes it able to recover
-
 o. the TIM32 timings are quite probably off by one or so
-
-o. make the arctan table two pages long instead of one for more precision?
-
-o. shouldn't be calling arctan with 0s for deltas since part of the formula the table is generated with is atan($z/$y)
-   ... calling it with two 0 deltas will make it run forever; okay, it handles this special case now, though I wish I didn't have to spend the CPU cycles
-       ... swapping Y and Z could avoid a division by zero if we stop following the platform when deltaz == 1, which we currently do
-   
-o. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
-   interpolate between them
 
 o. rather than doing jsr/rts, just use one memory location as an index into a jump table of where to return to; this would save one byte of RAM
     ... or don't jsr at all; we're rts'ing so that WSYNC etc can be diddled; just do it inline
@@ -290,20 +331,75 @@ o. rather than doing jsr/rts, just use one memory location as an index into a ju
 
 o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
-o. _plathypot could probably be optimized
+o. plotonscreen is kind of fucked; little changes (and new features) radically change what gets drawn when they're enabled/disabled
+   ... but unit tests aren't picking up on any differences in what gets plotted when branching to plotonscreen3a or plotonscreen8 is enabled when drawing to lastline
+   ... differences in what gets rendered seems to have been in the past largely influenced by run time and it running out of time to render things
+       ... things should be much better in that regard now so I'm not sure what's up
 
-o. the thing is currently rendering a lot of width 0 stuff; this gets drawn as nothing on the display; this is probably a fuck-up with the arctan lookup
-   operating without bounding
+o. _plathypot could probably be optimized
 
 o. try to get INTIM checks back to 7 or at least 8; up to 9 from 7 right now
     XXX X gets its value from S before being passed in; could just pass in S instead of X and leave X free, to shave cycles in here
 
 o. let's turn this into a sort of freerunning first person platformer
+   ... Integral Trees-ish?
+   ... very low gravity
+   ... lots of stuff to jump off of
+   ... springy stuff too!
+   ... try to maintain altitude
+   ... omg!  vines to swing on, pitfall style?
+   ... "Sky Castles" ... sky castle theme... use a sprite to render off in the distance castleage
 
+o. 2 bits for color is probably enough; the colors table already only has 4 entries
 
-;       debugging; are we still getting zero width platform segments that chew up CPU?  looks like not
-;       cmp #0
-;       bne testtesttest    
-;       inc num0        ; testing XXXX... how many of these zero width platforms are we seeing each frame?  up to $24.  a lot.
-; testtesttest
+o. maybe rather than the platforms being solid colored, make them striped as in Atari 2600 - Demoscene - 02 - Ataventure - Atari 2600 demo by Kk Dma.mp4
+   ... could use the specified platform color when drawing the main lines and then fill gaps with another (black? level0+5,y?)
+   ... also Atari 2600 - Demoscene - 04 - Trsi Digital Sounds System Crest - aTaRSI (2013) Atari Vcs.mp4 shades things darker when they're further away -- nice!
+   ... the background should also be shaded and colored
+       ... probably as a function of playery
+
+o. shade platforms darker when they're further away
+   ... drop off to darkness should be logarithmic
+       ... good thing we already have a lookup table
+   ... platforms with different colors on the top and bottom?
+   ... key platform pf bitmap graphics off of color plus width (use the whole scanline value) to draw different shape platforms
+       ... such as round things
+       ... yup, bitmaps for the platforms
+
+o. need to cap the player's Y 
+
+o. maybe make the ground greenish rather than brownish
+
+o. plotonscreen would let us draw veritcal bars such as tree trunks
+
+o. need to get sprite rendering going too
+   ... we have 14 cycles free right now.  
+   ... if that isn't enough to pull sprite data from the frame buffer, then at least it should be enough to:
+         lda (spritedata_pointer),y ; 5 cycles
+         sta GRP0					; 3 cycles
+       ... low byte of the zero page spritedata_pointer would have to be modified during vblank rendering to position the sprite
+       ... would use 200 or so bytes of data for the sprite rather than enabling/disabling it; that makes animation prohibitive
+   ... would be to cool to, if the 0 bit (eg) is clear, then instead of doing platform rendering, do sprite rendering using the other 7 bits of data!
+       ... existing platform/background data could just repeat for that line
+       ... sprite data would be explicitly turned off and explicitly updated but otherwise itself would just repeat
+           ... that would make for tall, skinny, stretched out sprites
+
+o. maybe warp the tables and run two different kernels so that the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution while the middle still has one
+   ... or else just double scanlines
+
+o. unit tests to make sure we plot a platform or two within a fixed number of cycles/instruction count so we know if we accidentally make it really slow again
+y
+
+o. we can't ever actually get on a platform; there's always a gap of sky/background below it
+   ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
+   ... platrenderline does a jmp platnext if deltay > deltaz check
+   ... arctangent needs to start with z=0 I guess
+
+o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
+
+o. use unit tests to figure out how long rendering takes in different circumstances.
+
+o. according to stella, we're on scanline 15 already by the time we start rendering the screen
+
+... rendering in 72 cpu cycles now
 
