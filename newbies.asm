@@ -76,23 +76,23 @@ flap_y		= %01111111;
 ; deltaz is in tmp1 and deltay is in tmp2 where they get shifted to the right
 ; this also adds half of the screen height or subtracts from half screen height as appropriate to convert to scan line number
 
+; first stuff case of the deltay = 0 before we look at other stuffed cases; deltay = 0 platforms are drawn dead center of the screen
+; we were stuffing that case, but then the arctangent table get fixed to handle it correctly so it got removed, then we started stuff
+; deltaz = 0 to return either 0 or viewsize-1 and that broke that, so we started stuffing deltay = 0 again.
+
+; XXXX since we now stuff Y=0, we can start the arctangent table on Y=1 for a little more precision
+
 		MAC _arctan
 .platlinedelta
 		lda deltay
+		beq .platlinedeltastuff2	; stuff the case where deltay = 0
+
 		_absolute
 		sta tmp2				; tmp2 has abs(deltay)
 
-; XXXXXX in .platlinedelta, maybe we need to first stuff case of the deltay = 0 before we look at other stuffed cases
-; I thought we *were* stuffing that case... oh yeah, we were, but then the details of the arctan table changed so that we didn't have to,
-; and then with this recent bit of stuff here, we broke that deltay = deltaz = 0 handling (where the table came back with 0), so really
-; we need to un-stuff or else re-stuff the situation where Y=0
-; XXXX if we stuff Y=0, we can start the arctangent table on Y=1 for a little more precision
-
-
-		;  stuff the case where deltaz = deltay
-		; also stuff the case where deltaz = 0
-		cmp deltaz
+		cmp deltaz				; is deltaz = deltay?
 		bne .platlinedeltago	; branch on the normal case where deltaz != deltay
+
 .platlinedeltastuff0
 		; deltaz = deltay or deltaz = 0; stuff the return value to be the very top or very bottom scanline, depending
 		bit deltay
@@ -105,9 +105,13 @@ flap_y		= %01111111;
 		lda #0
 		jmp .platarctan9
 
+.platlinedeltastuff2
+		lda #[viewsize/2]
+		bne .platarctan9
+
 .platlinedeltago
 		lda deltaz
-		beq .platlinedeltastuff0
+		beq .platlinedeltastuff0	; stuff the case where deltaz = 0; depending on deltay, we either return 0 or viewsize-1 for the scanline
 		sec
 		sbc tmp2
 		sta tmp1				; tmp1 has deltaz - abs(deltay)
@@ -580,7 +584,6 @@ platrenderline
 		lda deltay
 		_absolute
 		cmp deltaz
-; XXXXX single stepping through this with deltaz = deltay = 0 where it keeps rendering the 0 platform over and over and can't break out; right here, the neg flag is not set, of course, but it is equal so the beq jumps to platrenderline1 which should be fine
 		bmi platrenderline1
 		beq platrenderline1
 		jmp platnext			; do this if deltay > deltaz
@@ -605,9 +608,11 @@ platnextline
 		lda INTIM
 		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
 		; cmp #6
-		; OOOh.  the bmi is happening because INTIM is so large that INTIM - 7 still has bit 7 set.  it didn't wrap past 0, it just started and stayed > 127. XXX
-		bmi platnextline0		; if INITM is currently > 127, we have lots of time left on the clock; we can't subtract a small number and check the 7 bit; the 7 bit will stay set; this is a bug fix
-		cmp #8					; if INTIM is currently <= 127, then we can subtract a small number and see if it wrapped past zero
+		bpl platnextline0a		; the largest vaglue this will ever be loaded with is 96, which is less than 127; if we observe the 7 bit set, it means that we ran out of time on the timer
+ranoutoftime		; XXXX set a debugger breakpoint here; yup, it runs out of time a lot, and 04_runtime.pl agrees that stuff is taking way too much time
+		nop
+platnextline0a	; XXX testing
+		cmp #8
 		bmi vblanktimerendalmost
 platnextline0
 
