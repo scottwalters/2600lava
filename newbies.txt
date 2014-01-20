@@ -1,3 +1,61 @@
+o. write more tests
+   ... need to test for more edge cases in plotonscreen
+       ... what happens when we try to plot something of the same width
+       ... what happens when gap filling tries to plot something with the same width as what's there
+           ... there's some resolution loss there; the perspectivetable table has 128 entries but line widths in it only does up to 19
+               XXX could improve the resolution if we had duplicate entries in pf*lookup and used all five bits (up to 31) 
+       ... what happens when we try to draw another line in the same platform on top of lastline
+
+x. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
+   interpolate between them
+   ... XXX starts of platforms behind us will be rendered; have to take care in plotonscreen not to draw outside of the framebuffer!
+       ... ugh, do not want to deal with that... they can't be behind us.  can't do neg deltaz.  have to render in perspective.
+           ... so we have to clip the line.
+               ... let's maybe revisit this later.
+                   ... addressed this by having _arctan clamp deltay = deltaz and deltaz = 0 cases to the very top or bottom of the screen
+
+x. write a large scale test that calls platlevelclear
+   ... some of all of the three test platforms are drawn
+   ... they're drawn starting and ending on the display where they're supposed to be
+
+x. bug: why won't it render the one platform when there is only one platform in the level?
+   ... is it rendering all of the platforms right now?  haven't taken a close look at this
+   ... this antique bug probably went away by way of other changes
+       ... yup
+
+x. I think the arctan Y=0 logic isn't working; platforms disappear entirely when they're dead center in middle of the screen
+   ... 02_arctan.pl thinks its working
+       ... still, wouldn't hurt to have more tests to make sure it actually gets rendered
+
+o. XXX plotonscreen *might* run into a spot of bother when arctan stuffs scanline to 0, and then 0 gets stored as lastline, so then it doesn't there to be a lastline
+   ... actually, that should be okay
+       ... after stuffing scanline to 0 or viewsize-1, plotonscreen shouldn't be called again
+       ... a lastline of 0 will just cause it to not try to do any gap filling, which is fine
+
+... rendering in 72 cpu cycles now
+
+x. unit test cycle counts
+   ... unit tests to make sure we plot a platform or two within a fixed number of cycles so we know if we accidentally make it really slow again
+       ... done; tracking cycle counts in the commit messages
+   ... get 04_runtime.pl going with per-instruction (typical) cycle counts 
+       ... done
+
+x. with the revised deltaz loop control (allowing deltaz=0 and deltaz = deltay), when deltay=deltaz=0, it'll keep rendering that platform over and over
+   ... platrenderline checks ( deltay <= deltaz ) work fine with deltaz = deltay = 0
+   ... .platlinedelta stuffing works; Y is positive so scanline gets stuffed as #0
+       ... in .platlinedelta, maybe we need to first stuff case of the deltay = 0 before we look at other stuffed cases
+           ... yup
+    ... make sure we aren't rendering with deltay > deltaz again
+        ... working on that in 05_times2.pl
+           ... yup
+
+# supposedly, there are 5320 machine cycles total available during vblank and overscan
+10444 down from 10554 down from 10729
+10744 down from 10898 down from 11216
+5780 down from 5835 down from 5956
+9878 down from 10163 up from 9988
+6262 down from 7499 up from 6526
+
 x. we can't ever actually get on a platform; there's always a gap of sky/background below it
    ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
    ... arctangent needs to start with z=0 I guess
@@ -119,6 +177,11 @@ x. really not convinced we're getting 111 lines of display; is the 45 degree ang
    ... angle = atan(y_delta/z_delta)... delta_z must be greater than (>) delta_y or it's out of our 45 degree range
        ... yeah, that 45 degree check, or some related logic, was screwing us up there; still want to go through all of the rendering math and check things
    ... okay, we were *not* getting 110 lines of display; the arctan table has to be generated for the lines since it returns the scan line number
+
+x. get rid of marksweep in favor of just blanking at the start of the frame and redrawing
+
+x.         jmp platnext            ; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
+         ^--- fix this somehow; maybe treat the platform as if it is 1 lower than us while we're exactly on it
 
 x. lda playerzspeed        ; this is 1.4.3 fixed place
     ^--- make not 1.4.3 and I don't think it is anyway
@@ -278,27 +341,10 @@ there are viewsize lines (currently 101)
 
 o. 3D glasses support; use alternating sets of pf*lookup tables for left and right eyes
 
-o. I think the arctan Y=0 logic isn't working; platforms disappear entirely when they're dead center in middle of the screen
-   ... 02_arctan.pl thinks its working
-       ... still, wouldn't hurt to have more tests to make sure it actually gets rendered
-
-o. write more tests
-   ... need to test for more edge cases in plotonscreen
-       ... what happens when we try to plot something of the same width
-       ... what happens when gap filling tries to plot something with the same width as what's there
-           ... there's some resolution loss there; the perspectivetable table has 128 entries but line widths in it only does up to 20
-               XXX could improve the resolution if we had duplicate entries in pf*lookup and used all five bits (up to 31) 
-       ... what happens when we try to draw another line in the same platform on top of lastline
-   ... write a large scale test that calls platlevelclear
-       ... some of all of the three test platforms are drawn
-       ... they're drawn starting and ending on the display where they're supposed to be
-
-o. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
-   interpolate between them
-   ... XXX starts of platforms behind us will be rendered; have to take care in plotonscreen not to draw outside of the framebuffer!
-       ... ugh, do not want to deal with that... they can't be behind us.  can't do neg deltaz.  have to render in perspective.
-           ... so we have to clip the line.
-               ... let's maybe revisit this later.
+o. the plotonscreen rule where it skips drawing if the new line is in the same position as lastline isn't great when deltay = 0
+   ... the platform is drawn only at its shortest point, not the nearer widest
+       ... ignoring this as that's only a moment of the animation and the next and previous frames will look okay
+           ... and if you see if the leading edge of the platform on deltay = 0, then you're not going to land on it anyway
 
 ; todo next: sprites.  nice thing about first person is we don't need to draw ourselves!  so we can realistically have
 ; two enemy birds flying around.  enemy birds are going need x, y, and at least one velocity.
@@ -308,18 +354,11 @@ o. instead of drawing fat lines for each platform line, find the starting and en
 ; peek into the framebuffer and see if there is something nearer than them
 ; modify the inner loop to show a damn sprite or two... vary the colors, width, and graphics... good luck!
 
-; todo: land on platforms, bounce off of platforms when going up.  the flap and gravity routines need to look through
-; the list of platforms (ugh).  no, we just need to remember the position of the platform we're above/below.  there's already a note to do that.
-
 ; todo: game logic is very rough. besides floating down, we also seem to float back to the start of the level!
 
 ; todo: give the player a point every time they kill a bird!
 
 ; todo: waves.  when the birds are dead, pause a moment, and create more!
-
-o. bug: why won't it render the one platform when there is only one platform in the level?
-   ... is it rendering all of the platforms right now?  haven't taken a close look at this
-   ... this antique bug probably went away by way of other changes
 
 o. DCP Plus demo shows how to use the Pitfall 2 custom hardware (supported by Stella, Harmony, and Melody) which has fast fetchers and overrides lda #xx! awesome!
     o. too bad it doesn't override sta instead =P
@@ -331,11 +370,6 @@ o. replace this code for disabling sprites with something that shows a sprite or
         lda #%00001110
         sta COLUPF
     ... should be easy to decide whether to hide/show a scanline of player data; compare the Z position of the player to the width (distance) of the platform piece
-
-o.         jmp platnext            ; XX experimental -- on the same level as the platform?  don't show it.  sucks that our arctan table doesn't have any 0s in it so this case can be handled correctly, but maybe that can be tweaked.
-         ^--- fix this somehow; maybe treat the platform as if it is 1 lower than us while we're exactly on it
-
-o. get rid of marksweep in favor of just blanking at the start of the frame and redrawing
 
 o. re-working the vblank logic, I broke joystick button latching (which is part of the vblank enable register)
    ... need to re-read how this is supposed to work
@@ -374,8 +408,7 @@ o. let's turn this into a sort of freerunning first person platformer
    ... sometimes the user can flap a bit (mario style get a run for it and fly for a while), sometimes for a limited time they can fly around, sometimes only jump
        ... some kinds of power ups or something; changing bodies?
    ... philosophy:  create a machine that's fun to play with
-
-o. 2 bits for color is probably enough; the colors table already only has 4 entries
+   ... would be fun to have things occasionally falling from the sky
 
 o. maybe rather than the platforms being solid colored, make them striped as in Atari 2600 - Demoscene - 02 - Ataventure - Atari 2600 demo by Kk Dma.mp4
    ... could use the specified platform color when drawing the main lines and then fill gaps with another (black? level0+5,y?)
@@ -394,8 +427,12 @@ o. shade platforms darker when they're further away
 o. need to cap the player's Y 
 
 o. maybe make the ground greenish rather than brownish
+   ... or maybe we're above water
 
 o. plotonscreen would let us draw veritcal bars such as tree trunks
+   ... leafy vines
+   ... metal grates
+   ... brick walls
 
 o. need to get sprite rendering going too
    ... we have 14 cycles free right now.  
@@ -409,9 +446,10 @@ o. need to get sprite rendering going too
        ... sprite data would be explicitly turned off and explicitly updated but otherwise itself would just repeat
            ... that would make for tall, skinny, stretched out sprites
 
-o. maybe warp the tables and run two different kernels so that the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution while the middle still has one
-   ... or else just double scanlines
-
+o. make the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution while the middle still has one
+   ... warp the arctangent table
+   ... run two different kernels
+   ... this would help a lot with gap filling to the edges of the screen which is currently eating up obscene numbers of cycles
 
 o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
 
@@ -419,36 +457,22 @@ o. according to stella, we're on scanline 15 already by the time we start render
 
 o. steal physics from flapping.20050207.asm?
 
-... rendering in 72 cpu cycles now
-
-o. unit test cycle counts
-   ... unit tests to make sure we plot a platform or two within a fixed number of cycles so we know if we accidentally make it really slow again
-   ... get 04_runtime.pl going with per-instruction (typical) cycle counts 
-
-o. XXX when num0 (connected platform line gaps) hits 44 or something near that, the screen rolls
-    XXX it was shading things in just fine before with this being only 0F or so, tops, before we started gap filling to the screen edge
-    ... write tests to make sure that the deltay < deltaz check is working and we aren't wasting lots of CPU for no reason
-    ... observed num0 = 48
-    ... aha, this isn't happening because the comparison against TIM64 isn't large enough but because the check doesn't happen because of an infinite loop
-
-o. with the revised deltaz loop control (allowing deltaz=0 and deltaz = deltay), when deltay=deltaz=0, it'll keep rendering that platform over and over
-   ... platrenderline checks ( deltay <= deltaz ) work fine with deltaz = deltay = 0
-   ... .platlinedelta stuffing works; Y is positive so scanline gets stuffed as #0
-       XXX in .platlinedelta, maybe we need to first stuff case of the deltay = 0 before we look at other stuffed cases
-
-o. XXX plotonscreen *might* run into a spot of bother when arctan stuffs scanline to 0, and then 0 gets stored as lastline, so then it doesn't there to be a lastline
-   ... actually, that should be okay
-       ... after stuffing scanline to 0 or viewsize-1, plotonscreen shouldn't be called again
-       ... a lastline of 0 will just cause it to not try to do any gap filling, which is fine
-
-this was my commit message:
-fix a nasty INITM bug where we were subtracting a small number from a large number (eg 200 - 7) and then looking at the N flag, which was set (as bit 7 of the result i
-s set) and deciding that the result wrapped around to being negative when in reality it started and remained too large to be a signed 8 bit value.  d'oh.
-also, rework platnextline so that it's easier to follow.  I might go back and optimize it later but for now, explicitly handing < 0 and = 0 lets me get this straight i
-n my head.  I'm trying to figure out why the screen just goes black when we render a platform with deltay = 0 and deltaz = 0.
-I was suspecting an infinite loop, but 04_runtime.pl tells me that it does finish and in that not much more time, and the INTM 8 bit signed range bug explains why in t
-he debugger I never saw curplat go from 0 to 4 -- it just decided that it didn't have time to go.
-
 XXX worst case platform rendering takes 10729 cycles right now, which is a lot more than the 5320 available
-    XXX make sure we aren't rendering with deltay > deltaz again
+    ... with logic to skip gap filling when remaining CPU time is low, rolling stops, and I've observed as many as $2a gap fills
+    ... I know that $44 gap fills is too many
+        ... screen rolls
+    ... it was shading things in just fine before with this being only 0F or so, tops, before we started gap filling to the screen edge
+    ... observed num0 = 48
+
+o. unroll plotonscreen gap filling more?  or just outright cheat and skip z-buffering?
+
+o. land on platforms, bounce off of platforms when going up.
+   ... the flap and gravity routines need to look through the list of platforms (ugh)
+   ... no, we just need to remember the position of the platform we're above/below
+   ... for the sake of rendering things, deltaz and deltay are relative to our eyes; our feet are probably lower down
+   ... deltay > 0 means the platform is above us
+       ... it's playery - platformy; if positive, the platform is below us
+   ... while rendering, set bits when different conditions come up
+       ... deltaz = 1 and deltay = -1 means we've run face first into a platform, maybe
+       ... deltaz = 0 and deltay = 1 means we're standing on something
 
