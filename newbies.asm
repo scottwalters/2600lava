@@ -682,43 +682,73 @@ vblanktimerendalmost2
 ;
 
 ;
-; readstick
+; collisions
 ;
 
-readstick
-
+collisions
 		; detect collisions XXXXXXXXXXXXX
 
 		ldy #$ff
-		sty tmp2				; use tmp2 to record which, if any, platform we're standing on
+		sty tmp2				; use tmp2 to record which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
 		ldy #0
-		sty tmp1				; use tmp1 for collision bits
+		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
 		; sty deltaz	; don't think we need this
 		; sty curplat	; just keep it in Y?
 collisions1
 		lda level0,y			; load the first byte, the Z start position, of the current platform
 		beq collisions9			; stop when there's no more platform data
 
+		; make sure we're >= the start of it and <= the end of it
+		lda playerz
+		cmp level0+0,y
+		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet
+		lda level0+1,y
+		cmp playerz
+		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
+
 		; are we standing on this platform?
 		lda playery
 		clc						; our feet are one unit above our head, I guess, so subtract one extra
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		bne collisions2
-		; make sure we're >= the start of it and <= the end of it
-		lda playerz
-		cmp level0+0,y
-		bmi collisions2			; if playerz - platstart < 0, the platform hasn't started yet
-		lda level0+1,y
-		cmp playerz
-		bmi	collisions2			; if platend - playerz < 0, we're off the end of the platform
+		bne collisions2			; branch if not exactly one unit above the platform height
+collisions1a					; label just here for the unit tests
 		; okay, we're standing on this platform!
-collisions1a
 		sty tmp2
 		; XX maybe jmp out?  or are we going to start checking for other kinds of collisions?
 ; XXXX should probably have done the z checks first and then we could both check if we're standing on the platform or if we've hit our head
 		nop
+		jmp collisions8			; go on to the next platform
 
 collisions2
+		; okay, are we hitting our head?
+		lda playery
+		sec						; is our head exactly at the platform level?  bump.
+		sbc level0+2,y
+		bne collisions3			; not exactly so not hitting our head
+collisions2a
+		; we're hitting our head on this platform
+		lda tmp1
+		and #%00000001
+		sta tmp1
+		jmp collisions8			; go on to the next platform
+
+collisions3
+		; are we walking in to this platform?
+		lda level0,y
+		clc
+		sbc playerz
+		bne collisions8
+		lda level0+2,y
+		cmp playery
+		bne collisions8
+collisions3a
+		; we're walking in to this platform
+		lda tmp1
+		and #%00000010
+		sta tmp1
+		jmp collisions8			; go on to the next platform
+
+collisions8
 		; try another platform?
 		iny
 		iny
@@ -728,7 +758,13 @@ collisions2
 		jmp collisions1
 
 collisions9
+		rts
 
+;
+; readstick
+;
+
+readstick
 
 		; bit 3 = right, bit 2 = left, bit 1 = down, bit 0 = up, one stick per nibble
 		lda SWCHA
