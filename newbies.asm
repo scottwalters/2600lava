@@ -363,7 +363,7 @@ readstick8
 .plotonscreen1
 
 		cpx lastline			; are we drawing on top of the last line we drew for this platform?
-		; beq .plotonscreen3a	; skip straight to drawing it if we're overwriting a platform of the same color; this won't be safe if multiple platforms on the level are the same color! XXX
+		; beq .plotonscreen3a	; skip straight to drawing it
 		beq .plotonscreen9		; then do nothing
 
 		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
@@ -396,16 +396,13 @@ readstick8
 ;		and #%00000010			; select switch
 ;		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
 
-; XXXXXXXXXXXX only stop gap filling if we're running out of time on the last call in (during vblank)?; highly experimental
-		lda INTIM
-		cmp #2
-		bmi .plotonscreen8		; branch to bail if there the timer has less than two on it
-		cmp #8
-		bpl .plotonscreen7a		; branch to skip the vblank check if we have plenty of time left
-		lda caller
-		cmp #2
-		beq .plotonscreen8		; branch to bail out if this is the call made during blank
-.plotonscreen7a
+		lda INTIM				; get out of here if we've run out of time
+		cmp #3
+;		bmi .plotonscreen8		; branch to bail if there the timer has less than two on it
+		bpl .plotonscreen7
+		inc deltaz ; XXX can we rewind stuff a bit so this gap gets tried again?  doesn't seem to help.  bitch. XXX
+		jmp .plotonscreen9 ; bail without updating lastline
+.plotonscreen7
 
 		txa
 		sec
@@ -776,7 +773,7 @@ platnextline
 ranoutoftime		; XXXX set a debugger breakpoint here; yup, it runs out of time a lot, and 04_runtime.pl agrees that stuff is taking way too much time
 		nop
 platnextline0a	; XXX testing
-		cmp #8
+		cmp #5
 		bmi vblanktimerendalmost
 platnextline0
 
