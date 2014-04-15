@@ -360,6 +360,18 @@ readstick8
 ; it, hold the current color in tmp2
 
 		MAC _plotonscreen
+
+
+
+
+
+
+
+
+
+
+
+
 .plotonscreen1
 
 		cpx lastline			; are we drawing on top of the last line we drew for this platform?
@@ -389,7 +401,8 @@ readstick8
 
 .plotonscreen4
 		; figure out if we want to fill in the gap from here to the last line we drew
-		lda lastline			; make sure that there is a lastline and don't try to fill gaps if not
+		lda lastline			; make sure that there is a lastline and don't try to fill gaps if not XXXX ignoring a lastline of 0 is a bug
+		cmp #$ff
 		beq .plotonscreen8		; skip gap filling if there is no lastline
 
 ;		lda SWCHB
@@ -677,6 +690,7 @@ platlevelclear					; hit end of the level:  clear out all incremental stuff and 
 		sty deltaz
 		sty curplat
 		sty lastline
+		dec lastline ; # make it $ff
 
 		; zero out the framebuffer
 		ldy #viewsize-1
@@ -725,6 +739,7 @@ platfound
 		; a platform was found that ends in front of us; initialize deltay, deltaz and start doing lines from a platform
 		lda #0					; blank out the lastline so we don't try to gapfill to it when we start rendering the next platform
 		sta lastline
+		dec lastline ; make it $ff
 		lda level0+1,y			; get platform end
 		sec
 		sbc playerz
