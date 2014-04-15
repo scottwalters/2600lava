@@ -357,7 +357,7 @@ readstick8
 ; updates view[]
 ; uses tmp1 during the call to remember the new lastline
 ; this macro is used in three different places; okay, it's only used in one place with fatlines disabled but we're trying to add gap filling logic
-; instead of sticking Y (distance) into tmp2 to remember it, hold the current color in tmp2
+; it, hold the current color in tmp2
 
 		MAC _plotonscreen
 .plotonscreen1
@@ -396,28 +396,36 @@ readstick8
 ;		and #%00000010			; select switch
 ;		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
 
+; XXXXXXXXXXXX only stop gap filling if we're running out of time on the last call in (during vblank)?; highly experimental
 		lda INTIM
+		cmp #2
+		bmi .plotonscreen8		; branch to bail if there the timer has less than two on it
 		cmp #8
-		bmi .plotonscreen8		; XXX experimental; running low on CPU time remaining also disables filling in gaps; hey, this works great, except for, you know, the gaps
+		bpl .plotonscreen7a		; branch to skip the vblank check if we have plenty of time left
+		lda caller
+		cmp #2
+		beq .plotonscreen8		; branch to bail out if this is the call made during blank
+.plotonscreen7a
 
 		txa
 		sec
 		sbc lastline
 		cmp #1
-		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out; don't overwrite a narrow line with a fatter line
+		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out
 		cmp #$ff
-		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out; don't overwrite a narrow line with a fatter line
+		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out
 
+; XXX I think this could be made faster, and this is the most critical inner level of loop
 		cmp #0
 		bmi .plotonscreen6		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
 .plotonscreen5
 		inc num0				; XXXX count how many lines we fill in 
 		dex						; drawing downwards relative last plot; step back up one line and draw there
-		jmp .plotonscreen2		; recurse back in
+		bpl .plotonscreen2		; always branch; recurse back in
 .plotonscreen6
 		inc num0				; XXXX count how many lines we fill in
 		inx						; drawing upwards relative last plot
-		jmp .plotonscreen2		; recurse back in
+		bne .plotonscreen2		; always branch; recurse back in
 
 .plotonscreen8
 		ldx tmp1				; after we're done recursing to fill in the gaps, update lastline
@@ -467,17 +475,11 @@ reset0  sta $80,x
 
 startofframe
 
-		lda #$00
-		sta COLUBK
-
-		lda #%00000101		; reflected playfield with priority over players
+		lda #%00000101			; reflected playfield with priority over players
 		sta CTRLPF
 
 		lda #0
 		sta VBLANK
-		; sta PF0
-		; sta PF1
-		; sta PF2
 
 		ldy #viewsize			; indexes the view table and is our scanline counter
 		sty scanline
@@ -535,22 +537,18 @@ renderpump
         bne platforms		; +3    62
 
 renderdone
+		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the plast platform line
 
 
 ;
 ; debugging output (a.k.a. score)
 ;
-
 		; re-adjust after platform rendering
-		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the plast platform line
-		ldx #$ff			; we use the S register as a temp so restore it to the good stack pointer value of top level execution
-		txs
+score
+
 		; black to a back background
 		lda #$00
 		sta COLUBK
-
-score
-		sta WSYNC
 		lda #0
 		sta PF0
 		sta PF1
@@ -597,12 +595,11 @@ scoredone
 		sta PF1
 		sta WSYNC
 
-; we're on scanline 112 or so now depending on viewsize
-; picture is 192 - the 112 we've already done = 80 scan lines we need to waste
-; 80 or so scan lines to waste before overscan
+; XXXX I think we're at 123 scanlines at this point; double check that
+; if so, that leaves 69 scanlines
+; stella is saying we're 258 instead of 262 so bumping this up by 4 to 73... that's 1 too many so up to 72 then... okay, that lands us at 262
 
-		; lda #96					; 81*76/64 = 96 odd, plus one for the WSYNC at the end
-		lda #95					; = 80 scan lines * 76 cpu cycles per line / 64 clocks per time tick, plus one for the WSYNC at the end
+		lda #85					; = 72 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 81.9 and the WSYNC rounds up to the next scanline
 		sta TIM64T
 
 		_readstick
@@ -625,6 +622,7 @@ return1
 		sta WSYNC
 
 ; 3 scanlines of vsync signal
+; XXX is this enough time to do anything with?
 
 		lda #2
 		sta VSYNC
