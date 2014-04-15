@@ -47,8 +47,6 @@ $cpu->write_8( $symbols->lastline, 0 );
 
 $cpu->write_8( $symbols->SWCHB, 0b00000010 ); # select switch off (apparently 0 indicates it is being pressed)
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
-
 ok my $expected_width = $cpu->read_8( $symbols->perspectivetable + 10 ), 'there is an expected width';
 ok my $expected_color = $cpu->read_8( $symbols->level0 + 0 + 3 ), 'there is an expected color';
 
@@ -56,6 +54,8 @@ is $cpu->read_8( $symbols->view + 50 ), 0, "is line 50 blank to start with?";
 
 # Y gets the distance, which we use to figure out which size of line to draw
 # X gets the scan line to draw at
+
+$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
 
 $cpu->set_y( 10 );
 $cpu->set_x( 50 );
@@ -76,6 +76,8 @@ is count_lines_drawn($expected_color), 1, "and it's the right color";
 #
 
 diag 'second line in the same platform';
+
+$cpu->write_8( $symbols->INTIM, 10 );  # enough time left on the timer
 
 ok $expected_width = $cpu->read_8( $symbols->perspectivetable + 9 ), 'there is an expected width';
 
