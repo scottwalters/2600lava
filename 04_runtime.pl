@@ -139,4 +139,30 @@ $cycles = run_cpu( $symbols->vblanktimerendalmost );
 diag "ran in $cycles cycles";
 ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
+
+# and another troublesome one:
+
+$cpu->set_pc( $symbols->platlevelclear );
+$cpu->write_8( $symbols->playerz, 0x03 );
+$cpu->write_8( $symbols->playery, 0x1f );
+ 
+$cycles = run_cpu( $symbols->vblanktimerendalmost );
+
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
+
+
+# and another troublesome one:
+
+$cpu->set_pc( $symbols->platlevelclear );
+$cpu->write_8( $symbols->playerz, 0x00 );
+$cpu->write_8( $symbols->playery, 0x1d );
+ 
+$cycles = run_cpu( $symbols->vblanktimerendalmost );
+
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
+
+
+
 done_testing();
