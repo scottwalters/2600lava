@@ -361,87 +361,87 @@ readstick8
 
 		MAC _plotonscreen
 
+		cpx lastline		; are we drawing on top of the last line we drew for this platform?
+		beq .plot9			; branch if nothing to do; go to the end
 
-
-
-
-
-
-
-
-
-
-
-.plotonscreen1
-
-		cpx lastline			; are we drawing on top of the last line we drew for this platform?
-		; beq .plotonscreen3a	; skip straight to drawing it
-		beq .plotonscreen9		; then do nothing
-
-		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
-
-		; fetch the current platform color and stash it in tmp2 then put tmp1 back into X
-		ldx curplat
+		stx tmp1			; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
+		ldx curplat			; fetch the current platform color and stash it in tmp2 and then restore X to be the current line to draw at
 		lda level0+3,x
 		sta tmp2
 		ldx tmp1
 
-.plotonscreen2
+		lda lastline
+		bmi .plot_simple	; no last line; use the simple case
+
+		cpx lastline
+		bmi .plot_up0		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
+
+; otherwise, we're drawing downwards
+
+.plot_down0
+		inc lastline			; pre-increment lastline so that we can do an equality comparision rather than a +/- 1 comparison
+
+.plot_down1
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
 		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
-		bpl .plotonscreen4		; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
+		bpl .plot_down2			; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
 
-.plotonscreen3
-		; actually plot this line on the screen
-.plotonscreen3a
 		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
 		ora tmp2				; add the platform color
 		sta view,x				; draw to the framebuffer
 
-.plotonscreen4
-		; figure out if we want to fill in the gap from here to the last line we drew
-		lda lastline			; make sure that there is a lastline and don't try to fill gaps if not XXXX ignoring a lastline of 0 is a bug
-		cmp #$ff
-		beq .plotonscreen8		; skip gap filling if there is no lastline
+.plot_down2
+		cpx lastline			; XXX we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  lastline gets clobbered later anyway.
+		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
 
-;		lda SWCHB
-;		and #%00000010			; select switch
-;		beq .plotonscreen8 		; XXX testing; select switch disables filling in gaps
+		inc num0				; XXXX count how many lines we fill in
+		dex						; drawing downwards relative last plot
+		jmp .plot_down1			; always branch; recurse back in
 
-		lda INTIM				; get out of here if we've run out of time
-		cmp #3
-;		bmi .plotonscreen8		; branch to bail if there the timer has less than two on it
-		bpl .plotonscreen7
-		inc deltaz ; XXX can we rewind stuff a bit so this gap gets tried again?  doesn't seem to help.  bitch. XXX
-		jmp .plotonscreen9 ; bail without updating lastline
-.plotonscreen7
+; drawing upwards
 
-		txa
-		sec
-		sbc lastline
-		cmp #1
-		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out
-		cmp #$ff
-		beq .plotonscreen8		; if lastline minus curline is exactly 1 or -1 then our work is done; bail out
+.plot_up0
+		dec lastline			; pre-decrement lastline so that we can do a straight equality comparison
 
-; XXX I think this could be made faster, and this is the most critical inner level of loop
-		cmp #0
-		bmi .plotonscreen6		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
-.plotonscreen5
-		inc num0				; XXXX count how many lines we fill in 
-		dex						; drawing downwards relative last plot; step back up one line and draw there
-		bpl .plotonscreen2		; always branch; recurse back in
-.plotonscreen6
+.plot_up1
+		lda view,x				; get the line width of what's there already
+		and #%00011111			; mask off the color part and any other data
+		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
+		bpl .plot_up2			; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
+
+		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
+		ora tmp2				; add the platform color
+		sta view,x				; draw to the framebuffer
+
+.plot_up2
+		cpx lastline			; #$99
+		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
+
 		inc num0				; XXXX count how many lines we fill in
 		inx						; drawing upwards relative last plot
-		bne .plotonscreen2		; always branch; recurse back in
+		jmp .plot_up1			; always branch; recurse back in
 
-.plotonscreen8
+
+.plot_simple
+
+		lda view,x				; get the line width of what's there already
+		and #%00011111			; mask off the color part and any other data
+		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
+		bpl .plot8		; what we wanted to draw is smaller.  that means it's further away.  skip it.  but update lastline.
+
+		; actually plot this line on the screen
+		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
+		ora tmp2				; add the platform color
+		sta view,x				; draw to the framebuffer and then just fallthrough to .plot8
+
+.plot8
 		ldx tmp1				; after we're done recursing to fill in the gaps, update lastline
 		stx lastline
-.plotonscreen9
+.plot9
 		ENDM
+
+
 
 ;
 ; ROM
