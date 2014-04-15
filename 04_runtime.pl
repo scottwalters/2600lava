@@ -1,6 +1,12 @@
 #!/usr/local/bin/perl
 
-# make sure various bits of logic do the right thing with deltaz/deltay
+# do some basic checks on how long it takes to render things
+
+# 76*(30+37+3) = 5320       76 cycles per line; 30 is overscan, 3 is vsync, 37 is vblank
+# 76*(192-122+11) = 5244    192 display scanlines but viewsize is 122 and we waste about 11 lines XXX on other things
+# 10564                     total number of cycles we have to work with  XXX waiting on nearly expired timers eats some of this up
+
+my $available_cycles = 10564;
 
 use strict;
 use warnings;
@@ -83,8 +89,8 @@ $cpu->write_8( $symbols->playery, 0x20 );
  
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
-diag $cycles;  # not really cycles; just an instruction count; currently 2807 ... yeah, that's a lot
-ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles (6144 cycles)'; # XXX double check this to make sure the figure is accurate
+diag "ran in $cycles cycles"; # 10744
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
 # and another troublesome one:
 
@@ -94,8 +100,8 @@ $cpu->write_8( $symbols->playery, 0x1d );
  
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
-diag $cycles;  # 2773
-ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
 
 # and a made up one
@@ -106,8 +112,8 @@ $cpu->write_8( $symbols->playery, 0x10 );
  
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
-diag $cycles;  # 2113
-ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
 
 # starting view (looking out over a platform, with $39 = 57 bits of gap filled)
@@ -118,8 +124,8 @@ $cpu->write_8( $symbols->playery, 0x20 );
  
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
-diag $cycles;  # 2591
-ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
 
 # a view with only $0f gaps filled
@@ -130,8 +136,7 @@ $cpu->write_8( $symbols->playery, 0x18 );
  
 $cycles = run_cpu( $symbols->vblanktimerendalmost );
 
-diag $cycles;  # 2267
-ok int( $cycles / 64 ) < 96, 'finishes in less than 96*64 cycles';
-
+diag "ran in $cycles cycles";
+ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
 
 done_testing();
