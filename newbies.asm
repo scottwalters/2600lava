@@ -441,8 +441,6 @@ reset
 
 		sei                     ; Disable interrupts
 		cld                     ; Clear decimal bit
-		ldx #$ff				; top of the stack
-		txs                     ; Init Stack
 
 		; initialize ram to 0
 		lda #0
