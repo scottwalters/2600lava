@@ -32,15 +32,18 @@ deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
 lastline	ds 1		; last line rendered to the screen for gap filling
 
+; faked jsr/rts
+caller		ds 1		; which routine to return to
+
 ; framebuffer
-view	ds [ $ff - 2 - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
+view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
 
 
 ;
 ; constants
 ;
 
-viewsize	= [ $ff - 2 - view ]
+viewsize	= [ $ff - view ]
 		ECHO "viewsize: ", [viewsize]d
 
 flap_y		= %01111111;
@@ -61,6 +64,157 @@ flap_y		= %01111111;
 		clc
 		adc #$01
 .abs1
+		ENDM
+
+;
+; game logic
+;
+
+		MAC _gamelogic
+		;
+		; z speed
+		;
+		clc					; not sure about this, but setting carry if we're adding a negative number avoids subtracting one extra; since we're dealing with a fractal part of the speed, I'm just not going to worry about it
+		lda playerzspeed
+		adc playerzlo
+		sta playerzlo
+		lda playerz
+		bit playerzspeed	; reset the flags so we can test again if this is negative
+		bmi gamelogic1
+		adc #0				; positive so add 0
+		bcs gamelogic2		; don't write back to playerz if this addition would take it above $ff XXX actually, wouldn't this be the win condition for the level?
+		sta playerz
+		jmp gamelogic2
+gamelogic1
+		adc #$ff			; negative so add $ff
+		beq gamelogic2		; don't write back to playerz if this subtraction would take it to zero
+		sta playerz
+gamelogic2
+        ;
+		; y speed
+        ;
+		clc
+		lda playeryspeed
+		adc playerylo
+		sta playerylo
+		lda playery
+		bit playeryspeed	; reset the flags so we can test again if this is negative
+		bmi gamelogic3
+		adc #0				; positive so add 0
+		bcs gamelogic4		; don't write back to playery if this addition would take it above $ff
+		sta playery
+		jmp gamelogic4
+gamelogic3
+		adc #$ff			; negative so add $ff
+		beq gamelogic4		; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
+		sta playery
+gamelogic4
+
+gamelogic6
+		;
+		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
+		;
+		lda playeryspeed
+		sec
+		; sbc #%00000011 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX hold off on gravity for a bit
+		; sta num0 ; XX testing -- playeryspeed
+		bpl gamelogic6a		; still >0, so just save it 
+		;
+		; terminal volicity
+		;
+		cmp #%11100000		; 1.4.3.  $df terminal volicity.
+		; bcc gamelogic6b
+		bmi gamelogic6b
+gamelogic6a
+		sta playeryspeed
+gamelogic6b
+		;
+		; XXX land on platform?  land on ground?
+		;
+		lda playerz
+		bpl gamelogic7
+		lda #0
+		sta playerz
+		sta playerzlo
+		sta playerzspeed
+		; lda playerzspeed		; XXX okay, this logic isn't what's causing the bouncing
+		; cmp #128				; playerzspeed > 128, no barrow, carry is still set, and it gets rotated in
+		; ror
+		; sta playerzspeed
+		; lda #0					; negate the result
+		; sbc playerzspeed
+		; sta playerzspeed
+gamelogic7
+        ; return and diagnostic output
+		; lda playery
+		; lda playeryspeed
+		; sta num0			;	XX -- testing -- num0 is playeryspeed
+		ENDM
+
+;
+; readstick
+;
+
+		MAC _readstick
+		; bit 3 = right, bit 2 = left, bit 1 = down, bit 0 = up, one stick per nibble
+		lda SWCHA
+		and #$f0
+		eor #$ff
+readstick0
+        ; bit 0 = up
+		tax
+		and #%00010000
+		beq readsticka
+		ldy playery
+		cpy #$ff
+		beq readsticka ; don't go over
+		inc playery ; XXX testing
+readsticka
+        ; bit 1 = down
+		txa
+		and #%00100000
+		beq readstickb
+		ldy playery
+		cpy #$00
+		beq readstick5 ; don't go over
+		dec playery ; XXX testing
+readstickb
+		lda playery
+		; sta num0 ; XXXX
+readstick5
+		; bit 2 = left
+		txa
+		and #%01000000
+		beq readstick6
+		inc playerz ; XXX testing
+readstick6
+		; bit 3 = right
+		txa
+		and #%10000000
+		beq readstick7
+		dec playerz ; XXX testing
+readstick7
+		; button
+		lda INPT4
+		bmi readstick8  ; branch if button up (bit 7 stays 1 until the trigger is pressed, then it stays 0)
+        ; button down -- make player go faster forward and upwards, mostly upwards
+        ; also, reset the joy latches
+		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
+		sta VBLANK
+		lda #%01000000
+		sta VBLANK
+		; XXX bump playerzspeed
+readstick7a
+readstick7b
+		; inc playery XXX should inc it more or less depending on whether they're pushing forward or back
+		clc
+		lda playeryspeed
+		adc #flap_y
+		bvc readstick7c			; if there was no overflow, write the result back as-is
+		lda #%01111111			; clamp to max signed int 8
+readstick7c
+		sta playeryspeed
+readstick8
 		ENDM
 
 ;
@@ -453,16 +607,23 @@ scoredone
 		lda #95					; = 80 scan lines * 76 cpu cycles per line / 64 clocks per time tick, plus one for the WSYNC at the end
 		sta TIM64T
 
-		jsr readstick
-		jsr gamelogic
-		jsr platlevelclear		; start at the beginning; was platresume
+		_readstick
+		_gamelogic
+		lda #0					; return to return0
+		sta caller
+		jmp platlevelclear		; start at the beginning
+return0
 		sta WSYNC
+
 
 ; 30 lines of overscan, which means a timer for 29 frames plus a WSYNC
 
 		lda #34					; 29*76/64 = 34.4375, plus the WSYNC at the end
 		sta TIM64T
-		jsr platresume
+		lda #1					; return to return1
+		sta caller
+		jmp platresume
+return1
 		sta WSYNC
 
 ; 3 scanlines of vsync signal
@@ -489,7 +650,10 @@ scoredone
 
 		lda #42					; 36*76/64 = 42.75, plus one for the WSYNC at the end
 		sta TIM64T
-		jsr platresume
+		lda #2					; return to return2
+		sta caller
+		jmp platresume
+return2
 		lda #%01000000 ; turn VBLANK off and the joystick latch on; joystick triggers will now right read 1 until trigger is pressed, then it will stick as 0
 		sta VBLANK
 		sta WSYNC
@@ -498,10 +662,6 @@ scoredone
 ;
 
 		jmp startofframe
-
-;
-;
-;
 
 ;
 ; update frame buffer
@@ -671,9 +831,27 @@ vblanktimerendalmost1
 vblanktimerendalmost2
 		; lda tmp1
 		; sta num0 ; XX diagnostics to figure out how much time is left on the timer when platresume gives up
-		ldx #$fd			; we use the S register as a temp so restore it to the good stack pointer value; we only ever call one level deep so we can hard code this
-		txs
-		rts
+		; ldx #$fd			; we use the S register as a temp so restore it to the good stack pointer value; we only ever call one level deep so we can hard code this
+		; fall through to computedreturn
+
+computedreturn
+		; this stupidity saves one byte of RAM
+		lda caller
+		asl
+		tax
+		lda returntable,x
+		sta tmp1
+		lda returntable+1,x
+		sta tmp2
+		jmp (tmp1)
+
+;
+;		return address table
+;
+
+returntable
+		dc.w return0, return1, return2
+
 
 ;
 ;
@@ -684,6 +862,8 @@ vblanktimerendalmost2
 ;
 ; collisions
 ;
+
+; XXX so far, only called from unit tests
 
 collisions
 		; detect collisions XXXXXXXXXXXXX
@@ -758,159 +938,9 @@ collisions8
 		jmp collisions1
 
 collisions9
-		rts
+		rts ; XXXX make this a macro
 
-;
-; readstick
-;
 
-readstick
-
-		; bit 3 = right, bit 2 = left, bit 1 = down, bit 0 = up, one stick per nibble
-		lda SWCHA
-		and #$f0
-		eor #$ff
-readstick0
-        ; bit 0 = up
-		tax
-		and #%00010000
-		beq readsticka
-		ldy playery
-		cpy #$ff
-		beq readsticka ; don't go over
-		inc playery ; XXX testing
-readsticka
-        ; bit 1 = down
-		txa
-		and #%00100000
-		beq readstickb
-		ldy playery
-		cpy #$00
-		beq readstick5 ; don't go over
-		dec playery ; XXX testing
-readstickb
-		lda playery
-		; sta num0 ; XXXX
-readstick5
-		; bit 2 = left
-		txa
-		and #%01000000
-		beq readstick6
-		inc playerz ; XXX testing
-readstick6
-		; bit 3 = right
-		txa
-		and #%10000000
-		beq readstick7
-		dec playerz ; XXX testing
-readstick7
-		; button
-		lda INPT4
-		bmi readstick8  ; branch if button up (bit 7 stays 1 until the trigger is pressed, then it stays 0)
-        ; button down -- make player go faster forward and upwards, mostly upwards
-        ; also, reset the joy latches
-		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
-		sta VBLANK
-		lda #%01000000
-		sta VBLANK
-		; XXX bump playerzspeed
-readstick7a
-readstick7b
-		; inc playery XXX should inc it more or less depending on whether they're pushing forward or back
-		clc
-		lda playeryspeed
-		adc #flap_y
-		bvc readstick7c			; if there was no overflow, write the result back as-is
-		lda #%01111111			; clamp to max signed int 8
-readstick7c
-		sta playeryspeed
-readstick8
-		rts
-
-;
-; game logic
-;
-
-gamelogic
-		;
-		; z speed
-		;
-		clc					; not sure about this, but setting carry if we're adding a negative number avoids subtracting one extra; since we're dealing with a fractal part of the speed, I'm just not going to worry about it
-		lda playerzspeed
-		adc playerzlo
-		sta playerzlo
-		lda playerz
-		bit playerzspeed	; reset the flags so we can test again if this is negative
-		bmi gamelogic1
-		adc #0				; positive so add 0
-		bcs gamelogic2		; don't write back to playerz if this addition would take it above $ff XXX actually, wouldn't this be the win condition for the level?
-		sta playerz
-		jmp gamelogic2
-gamelogic1
-		adc #$ff			; negative so add $ff
-		beq gamelogic2		; don't write back to playerz if this subtraction would take it to zero
-		sta playerz
-gamelogic2
-        ;
-		; y speed
-        ;
-		clc
-		lda playeryspeed
-		adc playerylo
-		sta playerylo
-		lda playery
-		bit playeryspeed	; reset the flags so we can test again if this is negative
-		bmi gamelogic3
-		adc #0				; positive so add 0
-		bcs gamelogic4		; don't write back to playery if this addition would take it above $ff
-		sta playery
-		jmp gamelogic4
-gamelogic3
-		adc #$ff			; negative so add $ff
-		beq gamelogic4		; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
-		sta playery
-gamelogic4
-
-gamelogic6
-		;
-		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
-		;
-		lda playeryspeed
-		sec
-		; sbc #%00000011 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX hold off on gravity for a bit
-		; sta num0 ; XX testing -- playeryspeed
-		bpl gamelogic6a		; still >0, so just save it 
-		;
-		; terminal volicity
-		;
-		cmp #%11100000		; 1.4.3.  $df terminal volicity.
-		; bcc gamelogic6b
-		bmi gamelogic6b
-gamelogic6a
-		sta playeryspeed
-gamelogic6b
-		;
-		; XXX land on platform?  land on ground?
-		;
-		lda playerz
-		bpl gamelogic7
-		lda #0
-		sta playerz
-		sta playerzlo
-		sta playerzspeed
-		; lda playerzspeed		; XXX okay, this logic isn't what's causing the bouncing
-		; cmp #128				; playerzspeed > 128, no barrow, carry is still set, and it gets rotated in
-		; ror
-		; sta playerzspeed
-		; lda #0					; negate the result
-		; sbc playerzspeed
-		; sta playerzspeed
-gamelogic7
-        ; return and diagnostic output
-		; lda playery
-		; lda playeryspeed
-		; sta num0			;	XX -- testing -- num0 is playeryspeed
-		rts
 
 ;
 ;

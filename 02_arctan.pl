@@ -34,7 +34,7 @@ sub run_cpu {
     });
 }
 
-my $viewsize = 0xff - 2 - $symbols->view; 
+my $viewsize = 0xff - $symbols->view; 
 my $half_way_down_screen = int( $viewsize / 2 );
 
 # this is based on the perl embedded in newbies.asm for generating the 'arctangent' table
@@ -88,7 +88,6 @@ for my $deltas (
     # my $truncated_scanline_according_to_perl = scanline_according_to_perl( $truncated_deltay, $truncated_deltaz );
     diag "truncated deltay $truncated_deltay truncated deltaz $truncated_deltaz";
     my $looked_up_arctan = $cpu->read_8( $symbols->arctangent + ( ( $truncated_deltay << 4 ) | $truncated_deltaz ) , $deltay );
-    # my $half_way_down_screen_plus_looked_up_arctan = ( $half_way_down_screen + ( $deltay < 0 ? - $looked_up_arctan : $looked_up_arctan ) );
     my $half_way_down_screen_plus_looked_up_arctan = ( $half_way_down_screen + ( $deltay < 0 ? $looked_up_arctan : - $looked_up_arctan ) ); # the 6502 version flipped the framebuffer upside down
     diag "looked_up_arctan + half_way_down_screen = $half_way_down_screen_plus_looked_up_arctan";
 
