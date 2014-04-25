@@ -42,6 +42,18 @@ sub symbols {
             $self->{$method};
         }
 
+        sub name_that_location {  
+            my $self = shift;
+            my $loc = shift; 
+            my %locations = reverse %$self;
+            return $locations{$loc} if $locations{$loc}; 
+            # it looks like one more instruction executes after run_cpu() stops things, so try to deal with 1-3 byte instructions that don't branch again to try to figure out which label we tried to stop at
+            return $locations{$loc-1} if $locations{$loc-1};
+            return $locations{$loc-2} if $locations{$loc-2};
+            return $locations{$loc-3} if $locations{$loc-3};
+            return 'unknown location';
+        }   
+
         return bless \%symbols;
     }
 
