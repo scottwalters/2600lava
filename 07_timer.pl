@@ -133,7 +133,7 @@ run_cpu( $symbols->vblanktimerendalmost, $symbols->ranoutoftime );
 
 diag "stopped at symbol " .  $symbols->name_that_location( $cpu->get_pc );
 ok $symbols->name_that_location( $cpu->get_pc ) ne 'ranoutoftime', "didn't stop on the 'ranoutoftime' label";
-ok $symbols->name_that_location( $cpu->get_pc ) eq 'vblanktimerendalmost', "did stop on the 'vblanktimerendalmost' label";
+ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1'), "did stop on the 'vblanktimerendalmost' label (or something close)";
 
 diag "ran in $cycles cycles";
 ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
