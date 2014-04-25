@@ -424,6 +424,7 @@ readstick8
 
 
 .plot_simple
+		; handle the simple case of not having any gap to fill
 
 		lda view,x				; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
@@ -772,6 +773,23 @@ platrenderline1
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
+
+
+		; is there enough time left on the clock for the gap filling we have to do?
+		bit lastline
+		bmi platrenderline2		; branch if no lastline (lastline is initialized to $ff)
+		; adc #02					; some extra padding XXXX something is still fucking up
+		sec
+		sbc lastline			; subtract lastline from A from above, which is our new curline
+		_absolute
+		cmp INTIM
+		bmi platrenderline2		; branch over jmp and continue rendering if we have enough time left; number of lines to render is smaller than the value left on the timer; right now, each line takes slightly less time than one timer tick
+		jmp vblanktimerendalmost
+platrenderline2
+
+
+
+
 		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
@@ -782,13 +800,13 @@ platrenderline1
 platnextline
 
 		lda INTIM
-		; at least 5*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
-		; cmp #6
+		; at least n*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
+		; XXXX okay, we have to compute this based on how many lines of gap have to be filled
 		bpl platnextline0a		; the largest vaglue this will ever be loaded with is 96, which is less than 127; if we observe the 7 bit set, it means that we ran out of time on the timer
 ranoutoftime		; XXXX set a debugger breakpoint here; yup, it runs out of time a lot, and 04_runtime.pl agrees that stuff is taking way too much time
 		nop
 platnextline0a	; XXX testing
-		cmp #5
+		cmp #5				; without timer expiring logic in plotonscreen, I had to crank this up to 20 to get past it breaking on 'ranoutoftime'!  okay, unit tests say it needs 21, worst case.  currently, the added logic to platrenderline1 to check the gap to be filled and compare it to the timer, so turning this way down again.  timer is started at 85, 34, and 42.
 		bmi vblanktimerendalmost
 platnextline0
 
@@ -831,6 +849,7 @@ platnextline2
 vblanktimerendalmost
 		; lda #0				; XX testing
 		; sta tmp1
+		nop
 vblanktimerendalmost1
 		lda	INTIM
 		beq vblanktimerendalmost2
