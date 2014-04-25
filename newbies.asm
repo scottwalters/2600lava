@@ -778,10 +778,10 @@ platrenderline1
 		; is there enough time left on the clock for the gap filling we have to do?
 		bit lastline
 		bmi platrenderline2		; branch if no lastline (lastline is initialized to $ff)
-		; adc #02					; some extra padding XXXX something is still fucking up
 		sec
 		sbc lastline			; subtract lastline from A from above, which is our new curline
 		_absolute
+		adc #03					; some extra padding XXXX something is still fucking up
 		cmp INTIM
 		bmi platrenderline2		; branch over jmp and continue rendering if we have enough time left; number of lines to render is smaller than the value left on the timer; right now, each line takes slightly less time than one timer tick
 		jmp vblanktimerendalmost
@@ -852,9 +852,9 @@ vblanktimerendalmost
 		nop
 vblanktimerendalmost1
 		lda	INTIM
-		beq vblanktimerendalmost2
-		; inc tmp1			; XX testing -- how much time do we have to burn before the timer actually expires?
-        jmp vblanktimerendalmost1
+		beq vblanktimerendalmost2		; if timer is exactly zero, finish returning
+		bmi vblanktimerfuckedup
+        bne vblanktimerendalmost1
 vblanktimerendalmost2
 		; lda tmp1
 		; sta num0 ; XX diagnostics to figure out how much time is left on the timer when platresume gives up
@@ -871,6 +871,9 @@ computedreturn
 		lda returntable+1,x
 		sta tmp2
 		jmp (tmp1)
+
+vblanktimerfuckedup
+		bmi vblanktimerfuckedup			; XXX debugging
 
 ;
 ;		return address table
