@@ -41,7 +41,7 @@ while( my $line = readline $fh ) {
 sub run_cpu {
     my @stop_symbols = @_;
     my $cycles = 0;
-    $cpu->run(10000, sub {
+    $cpu->run(100000, sub {
             my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
             # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
             $cycles_per_opcode->[$inst] or die sprintf( "%2x (%d) has no cycle count", $inst, $inst) . "\n" . Dumper( $cycles_per_opcode );

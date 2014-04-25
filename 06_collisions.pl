@@ -64,7 +64,7 @@ for my $sym (
 
 # test standing on a platform
 
-$cpu->set_pc( $symbols->readstick ); # XXX subject to change
+$cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14+1 );
  
