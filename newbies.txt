@@ -316,6 +316,10 @@ done:
 ; idea:  joust...?  left/right turns you around, forward makes you run on a platform, button flaps, of course
 ; or no turn-around initially, since that would require rendering the level from the opposite perspective
 
+v/ we stop filling gaps when we start running low on CPU.  is there a better way to handle this?
+   ... fill gaps faster and don't even attempt to draw a line of a platform unless there's lots of time left on the clock
+       ... not perfect
+
 .............
 
 toggle debugger mode in stella is `
@@ -385,17 +389,11 @@ o. bcs gamelogic2      ; don't write back to playerz if this addition would take
 o. beq gamelogic4      ; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
 
 o. the TIM32 timings are quite probably off by one or so
-
-o. rather than doing jsr/rts, just use one memory location as an index into a jump table of where to return to; this would save one byte of RAM
-    ... or don't jsr at all; we're rts'ing so that WSYNC etc can be diddled; just do it inline
-    ... still need a byte to keep track of where we are in the vblank process
+   ... vblank, vsync early/late, etc
 
 o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
 o. _plathypot could probably be optimized
-
-o. try to get INTIM checks back to 7 or at least 8; up to 9 from 7 right now
-    XXX X gets its value from S before being passed in; could just pass in S instead of X and leave X free, to shave cycles in here
 
 o. let's turn this into a sort of freerunning first person platformer
    ... Integral Trees-ish?
@@ -409,6 +407,10 @@ o. let's turn this into a sort of freerunning first person platformer
        ... some kinds of power ups or something; changing bodies?
    ... philosophy:  create a machine that's fun to play with
    ... would be fun to have things occasionally falling from the sky
+   ... lob things on an arc to hit switches of some sort to raise grates and divert water?
+   ... bouncing big ball things kicking around?
+   ... shoot arrows to flip switches and kill knights?
+   ... platforms that move around?
 
 o. maybe rather than the platforms being solid colored, make them striped as in Atari 2600 - Demoscene - 02 - Ataventure - Atari 2600 demo by Kk Dma.mp4
    ... could use the specified platform color when drawing the main lines and then fill gaps with another (black? level0+5,y?)
@@ -433,6 +435,7 @@ o. plotonscreen would let us draw veritcal bars such as tree trunks
    ... leafy vines
    ... metal grates
    ... brick walls
+   ... waterfalls
 
 o. need to get sprite rendering going too
    ... we have 14 cycles free right now.  
@@ -452,19 +455,11 @@ o. make the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution
    ... this would help a lot with gap filling to the edges of the screen which is currently eating up obscene numbers of cycles
 
 o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
+   ... currently at an odd number
 
 o. according to stella, we're on scanline 15 already by the time we start rendering the screen
 
 o. steal physics from flapping.20050207.asm?
-
-XXX worst case platform rendering takes 10729 cycles right now, which is a lot more than the 5320 available
-    ... with logic to skip gap filling when remaining CPU time is low, rolling stops, and I've observed as many as $2a gap fills
-    ... I know that $44 gap fills is too many
-        ... screen rolls
-    ... it was shading things in just fine before with this being only 0F or so, tops, before we started gap filling to the screen edge
-    ... observed num0 = 48
-
-o. unroll plotonscreen gap filling more?  or just outright cheat and skip z-buffering?
 
 o. land on platforms, bounce off of platforms when going up.
    ... the flap and gravity routines need to look through the list of platforms (ugh)
@@ -475,4 +470,33 @@ o. land on platforms, bounce off of platforms when going up.
    ... while rendering, set bits when different conditions come up
        ... deltaz = 1 and deltay = -1 means we've run face first into a platform, maybe
        ... deltaz = 0 and deltay = 1 means we're standing on something
+
+o. gap filling won't fill to exactly the bottom line
+        lda lastline            ; make sure that there is a lastline and don't try to fill gaps if not
+        beq .plotonscreen8      ; skip gap filling if there is no lastline
+   ... okay, fixed that by stuff $ff in instead, but the first line is glitchy now
+
+ROM bytes used up to  $fa0e ... that's almost 2/3rds full
+
+o. monitor ranoutoftime (break ranoutoftime) to make sure we're allowing enough time for plotonscreen to run
+    ... turning off gap filling isn't an entirely bad effect
+    ... scanlines.txt has scanline counting methods
+
+o. rather than trying to leave and re-enter, do VSYNC/VBLANK diddling inline in plotonscreen
+    ... use a byte to keep track of where we are in the vblank process
+    ... when the timer hits 0 exactly, WSYNC and update registers
+    ... make this timer check a macro and use it from enough places that the timer never expires
+    ... okay, checking every 64 cycles would be too much overhead.  we're better off checking less often and then burning some time.
+
+$cpu->write_8( $symbols->platnextline0a+1, 16 ); directly determines whether shit gets fucked up or not.  huh.  how!?
+    ... aha.  needs *21* on the clock to always be safe.  otherwise, there may or may not be enough time left.
+    ... my guess is that it goes negative and beyond and the ranoutoftime check doesn't work properly so it keeps trying to do more lines
+        ... output curplat, deltaz, lastline
+        ... yup, correct.  it continues on from deltaz=2 to deltaz=1
+    XXX okay, we need to make timer expiring logic more intelligent, one way or another
+        ... if there's a lastline, make sure that abs(curline-lastline) > INTIM before we continue
+do at 779 a version of what we do at 787
+        ... or else invert control like we were thinking of before
+
+
 
