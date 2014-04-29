@@ -17,17 +17,19 @@ use PadWalker;
 
 my $symbols = symbols::symbols('newbies.lst');
 
-diag sprintf ".plotonscreen1 = %x\n", $symbols->{'.plotonscreen1'};
-diag sprintf ".plotonscreen9 = %x\n", $symbols->{'.plotonscreen9'};
+diag sprintf ".plotonscreen = %x\n", $symbols->{'.plotonscreen'};
+diag sprintf ".plot9 = %x\n", $symbols->{'.plot9'};
 
 my $cpu = Acme::6502->new();
 $cpu->load_rom( 'newbies.bin', 0xf000 );
+
+$cpu->write_8( $symbols->INTIM, 76 );   # stuff the timer
 
 sub run_cpu {
     $cpu->run(10000, sub {
             my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
             # diag sprintf "pc = %x inst = %x x = %s", $pc, $inst, $x;
-            if( $pc == $symbols->{'.plotonscreen9'} ) {
+            if( $pc == $symbols->{'.plot9'} ) {
                 ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
             }
     });
@@ -43,7 +45,7 @@ my $viewsize = 0xff - 2 - $view;
 diag 'drawing one initial line';
 
 $cpu->write_8( $symbols->curplat, 0 );  # controls what color the line drawn will be
-$cpu->write_8( $symbols->lastline, 0 );
+$cpu->write_8( $symbols->lastline, 0xff );
 
 $cpu->write_8( $symbols->SWCHB, 0b00000010 ); # select switch off (apparently 0 indicates it is being pressed)
 
@@ -55,7 +57,7 @@ is $cpu->read_8( $symbols->view + 50 ), 0, "is line 50 blank to start with?";
 # Y gets the distance, which we use to figure out which size of line to draw
 # X gets the scan line to draw at
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 10 );
 $cpu->set_x( 50 );
@@ -81,7 +83,7 @@ $cpu->write_8( $symbols->INTIM, 10 );  # enough time left on the timer
 
 ok $expected_width = $cpu->read_8( $symbols->perspectivetable + 9 ), 'there is an expected width';
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 9 );
 $cpu->set_x( 53 );
@@ -105,7 +107,7 @@ diag 'third line in the same platform';
 
 ok $expected_width = $cpu->read_8( $symbols->perspectivetable + 8 ), 'there is an expected width';
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 8 );
 $cpu->set_x( 57 );
@@ -128,13 +130,13 @@ is count_lines_drawn_by_color($expected_color), 8, "and they're the right color"
 diag 'drawing a line from a second platform that should be further away in the Z buffer';
 
 $cpu->write_8( $symbols->curplat, 4 );  # controls what color the line drawn will be; this number is a multiple of four
-$cpu->write_8( $symbols->lastline, 0 );
+$cpu->write_8( $symbols->lastline, 0xff );
 
 ok my $expected_width_2 = $cpu->read_8( $symbols->perspectivetable + 17 ), 'there is an expected width'; # 17 in is width 8 right now by the way
 ok my $expected_color_2 = $cpu->read_8( $symbols->level0 + 4 + 3 ), 'there is an expected color';
 isnt $expected_color, $expected_color_2, "second platformis to be a different color than the first";
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 17 ); # much further away
 $cpu->set_x( 52 ); # previously, lines 50-57 have been plotted; aim for somewhere in the middle of that
@@ -158,13 +160,13 @@ ok ! count_lines_drawn_by_color($expected_color_2), "no lines drawn with the sec
 diag 'drawing a line from a third platform that should be closer in the Z buffer';
 
 $cpu->write_8( $symbols->curplat, 8 );  # controls what color the line drawn will be; this number is a multiple of four
-$cpu->write_8( $symbols->lastline, 0 );
+$cpu->write_8( $symbols->lastline, 0xff );
 
 ok my $expected_width_3 = $cpu->read_8( $symbols->perspectivetable + 7 ), 'there is an expected width';
 ok my $expected_color_3 = $cpu->read_8( $symbols->level0 + 8 + 3 ), 'there is an expected color';
 isnt $expected_color, $expected_color_2, "second platformis to be a different color than the first";
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 7 ); # closer
 $cpu->set_x( 54 ); # previously, lines 50-57 have been plotted; aim for somewhere in the middle of that
@@ -187,7 +189,7 @@ is count_lines_drawn_by_color($expected_color_3), 1, "one lines drawn with the t
 
 diag 'drawing a line from a second line on the third platform';
 
-$cpu->set_pc($symbols->{'.plotonscreen1'} || die);
+$cpu->set_pc($symbols->{'.plotonscreen'} || die);
 
 $cpu->set_y( 7 ); # closer still
 $cpu->set_x( 60 ); # draw down below what's been drawn so far
