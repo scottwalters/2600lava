@@ -76,6 +76,7 @@ flap_y		= %01111111;
 ; this is about 32 bytes long and used in three places
 
 		MAC _vsync
+		sta WSYNC				; do this immediately
 		lda caller
 		beq .vsync1
 
@@ -86,12 +87,10 @@ flap_y		= %01111111;
 		jmp startofframe
 
 .vsync1							; caller = 0
-		inc caller				; run .vsync0 next time
-
 		; 3 scanlines of vsync signal
 		; this should happen on scanline 262, taking us back to scanline 1
 		lda #2
-		sta WSYNC				; should hopefully roll us over to the start of scanline 260
+		; sta WSYNC				; done above/immediately instead; should hopefully roll us over to the start of scanline 260
 		sta VSYNC
 		sta WSYNC				; 261
 		sta WSYNC				; 262
@@ -102,8 +101,12 @@ flap_y		= %01111111;
 		; start vblank
 		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
 		sta VBLANK
+
 		lda #44					; 36*76/64 = 42.75, plus one for the WSYNC at the end    XXXX these fractions are scary; 64*0.25 gives us 16 cycles to do this bullshit in before the WSYNC is maybe late; adjusting this to 44 instead based on experimenting with stella
 		sta TIM64T
+
+		inc caller				; run .vsync0 next time
+
 		; fall through to continue whereever we were invoked
 		ENDM
 
@@ -546,7 +549,7 @@ reset0  sta $80,x
 startofframe
 
 		lda #%01000000			; turn VBLANK off and leave the joystick latch on
-		sta WSYNC				; should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
+		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
 		sta VBLANK
 
 		lda #%00000101			; reflected playfield with priority over players
@@ -812,15 +815,14 @@ platnextline
 
 		lda INTIM
 		; at least n*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.
-		bpl platnextline0a		; if we observe the 7 bit set, it means that we ran out of time on the timer
-ranoutoftime					; you can set a debugger breakpoint here, but the unit tests also watch for execution hitting this spot
-		nop
+		beq platnextline0c		; timer expired?  branch to immediately deal with it
 platnextline0a
 		cmp #5
 		bpl platnextline0		; branch if INTIM >= 5; we have time to find the next platform line
 platnextline0b					; otherwise, burn time until the timer runs out, handle the video control, and continue
 		lda	INTIM
 		bne platnextline0b
+platnextline0c
 		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel
 platnextline0
 
