@@ -26,7 +26,6 @@ NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
 scanline = tmp1 
 
 ; level render
-; these must be persistent between calls to platresume so the routine can pause and resume
 curplat		ds 1		; which platform we are rendering or considering; used as an index into the level0 table; incremented by 4 for each platform
 deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
@@ -65,6 +64,49 @@ flap_y		= %01111111;
 		adc #$01
 .abs1
 		ENDM
+
+;
+; vsync/vblank
+;
+
+; when the timer expires, do the next step in the vblank/vsync dance, using 'caller' to decide what the next step is
+; only A is available for us to use
+; code using this macro counts on the Z flag being clear after this runs
+; caller = 0 = still in drawable plus 30 lines of overscan, 1 = 37 lines of vblank, then go to drawing kernel after that
+; this is about 32 bytes long and used in three places
+
+		MAC _vsync
+		lda caller
+		beq .vsync1
+
+.vsync0							; caller = 1
+		; and back to drawing the screen
+		; this should happen on scanline 37
+		; turning vblank off happends there
+		jmp startofframe
+
+.vsync1							; caller = 0
+		inc caller				; run .vsync0 next time
+
+		; 3 scanlines of vsync signal
+		; this should happen on scanline 262, taking us back to scanline 1
+		lda #2
+		sta WSYNC				; should hopefully roll us over to the start of scanline 260
+		sta VSYNC
+		sta WSYNC				; 261
+		sta WSYNC				; 262
+		lda #0
+		sta VSYNC
+
+		; 37 lines of vblank next
+		; start vblank
+		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
+		sta VBLANK
+		lda #44					; 36*76/64 = 42.75, plus one for the WSYNC at the end    XXXX these fractions are scary; 64*0.25 gives us 16 cycles to do this bullshit in before the WSYNC is maybe late; adjusting this to 44 instead based on experimenting with stella
+		sta TIM64T
+		; fall through to continue whereever we were invoked
+		ENDM
+
 
 ;
 ; game logic
@@ -361,20 +403,25 @@ readstick8
 
 		MAC _plotonscreen
 
-		cpx lastline		; are we drawing on top of the last line we drew for this platform?
-		beq .plot9			; branch if nothing to do; go to the end
+.plotonscreen
+		cpx lastline			; are we drawing on top of the last line we drew for this platform?
+		; beq .plot9				; branch if nothing to do; go to the end
+		beq .plot4			; branch if nothing to do; go to the end; .plot9 is out of range now, so bouncing off of a springboard to it
+.plot0
 
-		stx tmp1			; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
-		ldx curplat			; fetch the current platform color and stash it in tmp2 and then restore X to be the current line to draw at
+		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
+		ldx curplat				; fetch the current platform color and stash it in tmp2 and then restore X to be the current line to draw at
 		lda level0+3,x
 		sta tmp2
 		ldx tmp1
 
 		lda lastline
-		bmi .plot_simple	; no last line; use the simple case
+		; bmi .plot_simple		; .plot_simple is out of range; no last line if the highbit is set; use the simple case
+		bmi .plot5				; .plot_simple is out of range; springboard to it; no last line if the highbit is set; use the simple case; out of range now
 
 		cpx lastline
-		bmi .plot_up0		; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
+		bmi .plot_up0			; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
+
 
 ; otherwise, we're drawing downwards
 
@@ -392,12 +439,21 @@ readstick8
 		sta view,x				; draw to the framebuffer
 
 .plot_down2
-		cpx lastline			; XXX we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  lastline gets clobbered later anyway.
+		cpx lastline			; we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  this routine updates lastline anyway.
 		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
-
-		inc num0				; XXXX count how many lines we fill in
+.plot_down2a
 		dex						; drawing downwards relative last plot
-		jmp .plot_down1			; always branch; recurse back in
+		; jmp .plot_down1			; always branch; recurse back in
+		lda	INTIM
+		bne .plot_down1
+		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
+		bne .plot_down1			; loop always
+
+; springboards
+.plot4
+		beq .plot9
+.plot5
+		bmi .plot_simple
 
 ; drawing upwards
 
@@ -418,10 +474,12 @@ readstick8
 		cpx lastline			; #$99
 		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
 
-		inc num0				; XXXX count how many lines we fill in
 		inx						; drawing upwards relative last plot
-		jmp .plot_up1			; always branch; recurse back in
-
+		; jmp .plot_up1			; always branch; recurse back in
+		lda	INTIM
+		bne .plot_up1
+		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
+		bne .plot_up1			; loop always
 
 .plot_simple
 		; handle the simple case of not having any gap to fill
@@ -435,6 +493,7 @@ readstick8
 		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
 		ora tmp2				; add the platform color
 		sta view,x				; draw to the framebuffer and then just fallthrough to .plot8
+		; fall through
 
 .plot8
 		ldx tmp1				; after we're done recursing to fill in the gaps, update lastline
@@ -486,11 +545,12 @@ reset0  sta $80,x
 
 startofframe
 
+		lda #%01000000			; turn VBLANK off and leave the joystick latch on
+		sta WSYNC				; should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
+		sta VBLANK
+
 		lda #%00000101			; reflected playfield with priority over players
 		sta CTRLPF
-
-		lda #0
-		sta VBLANK
 
 		ldy #viewsize			; indexes the view table and is our scanline counter
 		sty scanline
@@ -500,8 +560,8 @@ startofframe
 		lsr
 		sta tmp2
 
-		sta WSYNC			
-		bne renderpump			; always
+		sta WSYNC				; scanline 38 (second drawable but again we don't draw anything)
+		jmp renderpump			; always
 
 platforms
 
@@ -599,8 +659,8 @@ VSCOR	sta  WSYNC              ; Start with a fresh scanline.
 		inc tmp1
 		ldy  tmp1				; +3 
 		cpy  #7					; +3 
-		bne  VSCOR				; +5 taken (?) 
-scoredone
+		bne  VSCOR				; +5 taken
+scoredone						; scanline 158, s.cycle 66
 
 		lda #0
 		sta PF1
@@ -609,66 +669,18 @@ scoredone
 ; XXXX I think we're at 123 scanlines at this point; double check that
 ; if so, that leaves 69 scanlines
 ; stella is saying we're 258 instead of 262 so bumping this up by 4 to 73... that's 1 too many so up to 72 then... okay, that lands us at 262
+; plus 34 more scanlines for overscan
 
-		lda #85					; = 72 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 81.9 and the WSYNC rounds up to the next scanline
+		lda #120					; = 72+34 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 125.875 and the WSYNC rounds up to the next scanline; tweaking based on experimenting with stella
 		sta TIM64T
 
 		_readstick
 		_gamelogic
-		lda #0					; return to return0
+
+		lda #0					; phase 0 in the vblank process
 		sta caller
-		jmp platlevelclear		; start at the beginning
-return0
-		sta WSYNC
 
 
-; 30 lines of overscan, which means a timer for 29 frames plus a WSYNC
-
-		lda #34					; 29*76/64 = 34.4375, plus the WSYNC at the end
-		sta TIM64T
-		lda #1					; return to return1
-		sta caller
-		jmp platresume
-return1
-		sta WSYNC
-
-; 3 scanlines of vsync signal
-; XXX is this enough time to do anything with?
-
-		lda #2
-		sta VSYNC
-		sta WSYNC
-		sta WSYNC
-		sta WSYNC
-		lda #0
-		sta VSYNC
-
-;
-; start vblank
-;
-
-		; lda #%00000010			; turn off joystick latches (bit 7) for VBLANK to reset them; bit 2 sets VBLANK
-		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; bit 2 sets VBLANK
-		sta VBLANK
-
-; 37 lines of vblank
-; (76*30)/64 = 35.625.  the Combat version had a wsync before it for 36.6, and if we do a wsync after the fact, then we're at 37.
-; okay, we do that WSYNC now, before the RTS.
-
-		lda #42					; 36*76/64 = 42.75, plus one for the WSYNC at the end
-		sta TIM64T
-		lda #2					; return to return2
-		sta caller
-		jmp platresume
-return2
-		lda #%01000000 ; turn VBLANK off and the joystick latch on; joystick triggers will now right read 1 until trigger is pressed, then it will stick as 0
-		sta VBLANK
-		sta WSYNC
-
-; and back to drawing the screen
-;
-
-		jmp startofframe
 
 ;
 ; update frame buffer
@@ -686,8 +698,10 @@ return2
 
 platlevelclear					; hit end of the level:  clear out all incremental stuff and go to the zeroith platform
 		; start over rendering
-		ldy #0
-		sty num0	; XXXX counting how many platform lines we render, or other platlevelclear+platresume specific metrics
+
+        ldy #0
+        sty num0  
+
 		sty deltaz
 		sty curplat
 		sty lastline
@@ -715,6 +729,7 @@ platnext0
 		ldy curplat				; offset into the level0 table
 		lda level0,y			; load the first byte, the Z start position, of the current platform
 		bne platnext1			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
+
 platnext0vblanktimer
 		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
 
@@ -773,22 +788,18 @@ platrenderline1
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
-
-
 		; is there enough time left on the clock for the gap filling we have to do?
-		bit lastline
-		bmi platrenderline2		; branch if no lastline (lastline is initialized to $ff)
-		sec
-		sbc lastline			; subtract lastline from A from above, which is our new curline
-		_absolute
-		adc #03					; some extra padding XXXX something is still fucking up
-		cmp INTIM
-		bmi platrenderline2		; branch over jmp and continue rendering if we have enough time left; number of lines to render is smaller than the value left on the timer; right now, each line takes slightly less time than one timer tick
-		jmp vblanktimerendalmost
-platrenderline2
-
-
-
+; XXX
+;		bit lastline
+;		bmi platrenderline2		; branch if no lastline (lastline is initialized to $ff)
+;		sec
+;		sbc lastline			; subtract lastline from A from above, which is our new curline
+;		_absolute
+;		adc #02					; some extra padding
+;		cmp INTIM
+;		bmi platrenderline2		; branch over jmp and continue rendering if we have enough time left; number of lines to render plus padding is smaller than the value left on the timer
+;		_vsync
+;platrenderline2
 
 		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
@@ -800,17 +811,20 @@ platrenderline2
 platnextline
 
 		lda INTIM
-		; at least n*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.  then did gap filling since then.
-		; XXXX okay, we have to compute this based on how many lines of gap have to be filled
-		bpl platnextline0a		; the largest vaglue this will ever be loaded with is 96, which is less than 127; if we observe the 7 bit set, it means that we ran out of time on the timer
-ranoutoftime		; XXXX set a debugger breakpoint here; yup, it runs out of time a lot, and 04_runtime.pl agrees that stuff is taking way too much time
+		; at least n*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.
+		bpl platnextline0a		; if we observe the 7 bit set, it means that we ran out of time on the timer
+ranoutoftime					; you can set a debugger breakpoint here, but the unit tests also watch for execution hitting this spot
 		nop
-platnextline0a	; XXX testing
-		cmp #5				; without timer expiring logic in plotonscreen, I had to crank this up to 20 to get past it breaking on 'ranoutoftime'!  okay, unit tests say it needs 21, worst case.  currently, the added logic to platrenderline1 to check the gap to be filled and compare it to the timer, so turning this way down again.  timer is started at 85, 34, and 42.
-		bmi vblanktimerendalmost
+platnextline0a
+		cmp #5
+		bpl platnextline0		; branch if INTIM >= 5; we have time to find the next platform line
+platnextline0b					; otherwise, burn time until the timer runs out, handle the video control, and continue
+		lda	INTIM
+		bne platnextline0b
+		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel
 platnextline0
 
-		; inc num0				; XXX counting how many platform lines we render in a frame
+		; advance to the next platform line and go to platnext or platrenderline as necessary
 
 		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
@@ -840,54 +854,25 @@ platnextline2
 		jmp platrenderline		; if deltaz is larger than level0,y - playerz - 1, then go on to render the next line with our newly dec'd deltaz; too far for a relative branch
 
 ;
-; timer
-;
-
-; execution is sent here when there isn't enough time left on the clock to render a line or do whatever other operation
-; nothing to do but wait for the timer to actually go off
-
-vblanktimerendalmost
-		; lda #0				; XX testing
-		; sta tmp1
-		nop
-vblanktimerendalmost1
-		lda	INTIM
-		beq vblanktimerendalmost2		; if timer is exactly zero, finish returning
-		bmi vblanktimerfuckedup
-        bne vblanktimerendalmost1
-vblanktimerendalmost2
-		; lda tmp1
-		; sta num0 ; XX diagnostics to figure out how much time is left on the timer when platresume gives up
-		; ldx #$fd			; we use the S register as a temp so restore it to the good stack pointer value; we only ever call one level deep so we can hard code this
-		; fall through to computedreturn
-
-computedreturn
-		; this stupidity saves one byte of RAM
-		lda caller
-		asl
-		tax
-		lda returntable,x
-		sta tmp1
-		lda returntable+1,x
-		sta tmp2
-		jmp (tmp1)
-
-vblanktimerfuckedup
-		bmi vblanktimerfuckedup			; XXX debugging
-
-;
-;		return address table
-;
-
-returntable
-		dc.w return0, return1, return2
-
-
-;
 ;
 ; small subroutines
 ;
 ;
+
+;
+; vblanktimerendalmost aka burntime
+;
+
+; despite the name, execution is sent here when we've finished rendering all of the platforms.
+; branching to startofframe is now handled in the _vsync macro used in various places.
+; XXX do other rendering here we want to do beyond rendering platforms.
+
+burntime
+vblanktimerendalmost
+		lda	INTIM
+		bne burntime
+		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
+		bne burntime			; branch always
 
 ;
 ; collisions
