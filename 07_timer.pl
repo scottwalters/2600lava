@@ -44,6 +44,8 @@ while( my $line = readline $fh ) {
 
 my $timer_cycles = 0;  # number of cycles in $cycles when the time was last restarted
 my $cycles = 0;
+my $ran_out_of_time = 0;
+my $last_intim_value;
 
 #
 # register implementations
@@ -55,7 +57,7 @@ package Register::TIM64T {
     sub TIESCALAR { my $class = shift; $_[0] ||= 0; return bless \$_[0] => $class; }
     sub STORE {
         $timer_cycles = $cycles;
-        warn "setting timer for $_[1] which gives @{[ 64 * $_[1] ]} cycles\n";
+        Test::More::diag "setting timer for $_[1] which gives @{[ 64 * $_[1] ]} cycles\n";
         ${$_[0]} = $_[1];
     }
 };
@@ -68,7 +70,8 @@ package Register::INTIM {
     sub FETCH {
          my $ret = $cpu->{mem}->[ $symbols->TIM64T ] - int( ( $cycles - $timer_cycles ) / 64 );
          my $stuff = join ' ', map { $_ . '=' . $cpu->read_8( $symbols->$_ ) } qw/curplat deltaz lastline/;
-         warn "fetching timer with $ret left on it at " . $symbols->name_that_location( $cpu->get_pc ) . " $stuff\n";
+         Test::More::diag "fetching timer with $ret left on it at " . $symbols->name_that_location( $cpu->get_pc ) . " $stuff\n";
+         $last_intim_value = $ret;
 
          $ret;
     }
@@ -81,16 +84,19 @@ tie $cpu->{mem}->[ $symbols->INTIM ], 'Register::INTIM';
 
 sub run_cpu {
     my @stop_symbols = @_;
+    $ran_out_of_time = 0;
 
     $cpu->run(100000, sub {
         my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
         # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
         $cycles_per_opcode->[$inst] or die sprintf( "%2x (%d) has no cycle count", $inst, $inst) . "\n" . Dumper( $cycles_per_opcode );
         $cycles += $cycles_per_opcode->[$inst];
-        if( grep $pc == $_, $symbols->{'.plot_down1'}, $symbols->{'.plot_up1'} ) {
-           $_ = $cpu->read_8( $symbols->INTIM ); # trigger a message from reading the tied memory location
+        # if( grep $pc == $symbols->{'platnextline0a'} and $cpu->get_a < 0 ) 
+        # if( $cpu->{mem}->[ $symbols->TIM64T ] and $cpu->read_8( $symbols->INTIM ) < 0 ) # generates spam
+        if( defined $last_intim_value and $cpu->{mem}->[ $symbols->TIM64T ] and $last_intim_value < 0 ) {
+            $ran_out_of_time = 1;
         } 
-        if( grep $pc == $_, @stop_symbols ) {
+        if( $ran_out_of_time or grep $pc == $_, @stop_symbols ) {
             ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
         }
     });
@@ -129,11 +135,11 @@ $cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x1F );
 
-run_cpu( $symbols->vblanktimerendalmost, $symbols->ranoutoftime );
+run_cpu( $symbols->vblanktimerendalmost, $symbols->startofframe );
 
 diag "stopped at symbol " .  $symbols->name_that_location( $cpu->get_pc );
-ok $symbols->name_that_location( $cpu->get_pc ) ne 'ranoutoftime', "didn't stop on the 'ranoutoftime' label";
-ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1'), "did stop on the 'vblanktimerendalmost' label (or something close)";
+ok ! $ran_out_of_time, "didn't run out of time";
+ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1', 'startofframe'), "did stop on the 'vblanktimerendalmost' label (or something close)";
 
 diag "ran in $cycles cycles";
 ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
@@ -142,23 +148,23 @@ ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
 # test other values to try to mess it up
 #
 
-$cpu->write_8( $symbols->TIM64T, 76 );
-
-$cpu->write_8( $symbols->platnextline0a+1, 17 );  # this is the INTIM timer expired test; according to the above (currently), this should be enough; it has 18 left when it hits vblanktimerendalmost
-diag "code is checking timer against this constant: " . $cpu->read_8( $symbols->platnextline0a+1 );
-
-$cpu->set_pc( $symbols->platlevelclear );
-$cpu->write_8( $symbols->playerz, 0x00 );
-$cpu->write_8( $symbols->playery, 0x1F );
-
-run_cpu( $symbols->vblanktimerendalmost, $symbols->ranoutoftime );
-
-diag "stopped at symbol " .  $symbols->name_that_location( $cpu->get_pc );
-ok $symbols->name_that_location( $cpu->get_pc ) ne 'ranoutoftime', "didn't stop on the 'ranoutoftime' label";
-ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1'), "did stop on the 'vblanktimerendalmost' label (or something close)";
-
-diag "ran in $cycles cycles";
-ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
+#$cpu->write_8( $symbols->TIM64T, 76 );
+#
+#$cpu->write_8( $symbols->platnextline0a+1, 1 );
+#diag "code is checking timer against this constant: " . $cpu->read_8( $symbols->platnextline0a+1 );
+#
+#$cpu->set_pc( $symbols->platlevelclear );
+#$cpu->write_8( $symbols->playerz, 0x00 );
+#$cpu->write_8( $symbols->playery, 0x1F );
+#
+#run_cpu( $symbols->vblanktimerendalmost, $symbols->startofframe );
+#
+#diag "stopped at symbol " .  $symbols->name_that_location( $cpu->get_pc );
+#ok ! $ran_out_of_time, "didn't run out of time";
+#ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1', 'startofframe'), "did stop on the 'vblanktimerendalmost' label (or something close)";
+#
+#diag "ran in $cycles cycles";
+#ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
 
 
 
