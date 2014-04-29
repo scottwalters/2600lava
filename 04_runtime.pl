@@ -41,14 +41,34 @@ while( my $line = readline $fh ) {
 sub run_cpu {
     my @stop_symbols = @_;
     my $cycles = 0;
+    my $plot_same_line_count = 0;
+    my $lines_of_gap_filled = 0;
+    my $times_plot_simple_is_called = 0;
+    my $times_plot_on_screen_called = 0;
     $cpu->run(100000, sub {
-            my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
-            # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
-            $cycles_per_opcode->[$inst] or die sprintf( "%2x (%d) has no cycle count", $inst, $inst) . "\n" . Dumper( $cycles_per_opcode );
-            $cycles += $cycles_per_opcode->[$inst];
-            if( grep $pc == $_, @stop_symbols ) {
-                ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
-            }
+        my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
+        # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
+        $cycles_per_opcode->[$inst] or die sprintf( "%2x (%d) has no cycle count", $inst, $inst) . "\n" . Dumper( $cycles_per_opcode );
+        $cycles += $cycles_per_opcode->[$inst];
+        if( $pc == $symbols->{'.plotonscreen'} ) {
+            $times_plot_on_screen_called++;
+        } 
+        if( $pc == $symbols->{'.plot0'} ) {
+            $plot_same_line_count++;
+        } 
+        if( $pc == $symbols->{'.plot_simple'} ) {
+            $times_plot_simple_is_called++;
+        } 
+        if( grep $pc == $_, $symbols->{'.plot_down1'}, $symbols->{'.plot_up1'} ) {
+            $lines_of_gap_filled++;
+        }
+        if( grep $pc == $_, @stop_symbols ) {
+            diag "$times_plot_on_screen_called calls to _plot_on_screen";
+            diag "$plot_same_line_count attempts were made to draw over the same line that we just drew";
+            diag "$times_plot_simple_is_called calls to .plot_simple";
+            diag "$lines_of_gap_filled lines of gap filled";
+            ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
+        }
     });
     return $cycles;
 }
