@@ -124,6 +124,7 @@ B1 5 (+1 if page crossed)
 B4 4
 B5 4
 B6 4
+B7 4 (LAX a,Y)
 B8 2
 B9 4 (+1 if page crossed)
 BA 2
