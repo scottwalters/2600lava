@@ -62,17 +62,31 @@ for my $sym (
     $cpu->write_8( $level0++, $sym );
 }
 
+#
 # test standing on a platform
+#
 
 $cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14+1 );
  
-run_cpu( $symbols->collisions1a, $symbols->collisions9 );
-
-my $loc = name_that_location( $cpu->get_pc );
-is $loc, 'collisions1a', 'stopped at collisions1a, where tmp2 is written, not collisions9, where it gave up and existed';
+run_cpu( $symbols->collisions9 );
 
 is $cpu->read_8( $symbols->tmp2 ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
+
+# 
+# test hitting our head on a platform from below
+#
+
+$cpu->set_pc( $symbols->collisions);
+$cpu->write_8( $symbols->playerz, 20 );
+$cpu->write_8( $symbols->playery, 0x14 );   # exactly at platform level
+ 
+run_cpu( $symbols->collisions9 );
+
+is $cpu->read_8( $symbols->tmp1 ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go upwards';
+is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
+
+
 
 done_testing();

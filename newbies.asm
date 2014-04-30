@@ -689,9 +689,9 @@ scoredone						; scanline 158, s.cycle 66
 ; update frame buffer
 ;
 
-; iterate through the platforms ahead of the player and updates the little frame buffer of line widths
-; atomic operation is one line; if inadequate CPU is left, it'll suspend before doing the next line and then resume
-; at the same point when next invoked
+; iterate through the platforms ahead of the player and updates the little frame buffer of line widths.
+; for each platform, it counts down from the end of the platform to the beginning of the platform.
+; if the rendering a line for one part of a platform would leave a gap between it and the previous one, it renders extra lines to fill in that gap.
 ; variables:
 ; curplat   -- which platform we're considering drawing or currently drawing (should be a multiple of 4)
 ; platend   -- stores level0[curplat][start] + level0[curplat][length]
@@ -791,19 +791,6 @@ platrenderline1
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
-		; is there enough time left on the clock for the gap filling we have to do?
-; XXX
-;		bit lastline
-;		bmi platrenderline2		; branch if no lastline (lastline is initialized to $ff)
-;		sec
-;		sbc lastline			; subtract lastline from A from above, which is our new curline
-;		_absolute
-;		adc #02					; some extra padding
-;		cmp INTIM
-;		bmi platrenderline2		; branch over jmp and continue rendering if we have enough time left; number of lines to render plus padding is smaller than the value left on the timer
-;		_vsync
-;platrenderline2
-
 		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
@@ -813,8 +800,9 @@ platrenderline1
 
 platnextline
 
+		; do we have enough time left on the clock to do another line of the platform?
+		; have to keep fudging this.
 		lda INTIM
-		; at least n*64 cycles left?  have to keep fudging this.  last observed was 5, so one for safety.
 		beq platnextline0c		; timer expired?  branch to immediately deal with it
 platnextline0a
 		cmp #5
@@ -882,6 +870,8 @@ vblanktimerendalmost
 
 ; XXX so far, only called from unit tests
 
+; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
+
 collisions
 		; detect collisions XXXXXXXXXXXXX
 
@@ -891,7 +881,10 @@ collisions
 		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
 		; sty deltaz	; don't think we need this
 		; sty curplat	; just keep it in Y?
+
 collisions1
+		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
+
 		lda level0,y			; load the first byte, the Z start position, of the current platform
 		beq collisions9			; stop when there's no more platform data
 
@@ -903,17 +896,15 @@ collisions1
 		cmp playerz
 		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
 
+		; our Z position overlaps the platform
 		; are we standing on this platform?
 		lda playery
-		clc						; our feet are one unit above our head, I guess, so subtract one extra
+		clc						; our head is one unit above our feet, I guess, so subtract one extra
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
 		bne collisions2			; branch if not exactly one unit above the platform height
 collisions1a					; label just here for the unit tests
 		; okay, we're standing on this platform!
 		sty tmp2
-		; XX maybe jmp out?  or are we going to start checking for other kinds of collisions?
-; XXXX should probably have done the z checks first and then we could both check if we're standing on the platform or if we've hit our head
-		nop
 		jmp collisions8			; go on to the next platform
 
 collisions2
@@ -925,7 +916,7 @@ collisions2
 collisions2a
 		; we're hitting our head on this platform
 		lda tmp1
-		and #%00000001
+		ora #%00000001
 		sta tmp1
 		jmp collisions8			; go on to the next platform
 
@@ -941,7 +932,7 @@ collisions3
 collisions3a
 		; we're walking in to this platform
 		lda tmp1
-		and #%00000010
+		ora #%00000010
 		sta tmp1
 		jmp collisions8			; go on to the next platform
 
