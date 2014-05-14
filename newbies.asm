@@ -119,21 +119,34 @@ flap_y		= %01111111;
 		;
 		; z speed
 		;
-		clc					; not sure about this, but setting carry if we're adding a negative number avoids subtracting one extra; since we're dealing with a fractal part of the speed, I'm just not going to worry about it
+gamelogic0
 		lda playerzspeed
-		adc playerzlo
+		asl					; move the sign bit into carry
+		bcs gamelogic1		; negative vs positive code path
+		; positive case
+		clc
+		adc playerzlo		; add the shifted value to the low byte
 		sta playerzlo
 		lda playerz
-		bit playerzspeed	; reset the flags so we can test again if this is negative
-		bmi gamelogic1
-		adc #0				; positive so add 0
+		adc #0				; positive so add 0 plus any carry
 		bcs gamelogic2		; don't write back to playerz if this addition would take it above $ff XXX actually, wouldn't this be the win condition for the level?
+; XXX also don't write back to playerz if we're colliding with a platform
 		sta playerz
 		jmp gamelogic2
 gamelogic1
-		adc #$ff			; negative so add $ff
-		beq gamelogic2		; don't write back to playerz if this subtraction would take it to zero
+		; playerzspeed is negative
+; XXX trying overflow; if this works, try to combine codepaths for positive and negative
+		lda playerzlo
+		adc playerzspeed
+		sta playerzlo
+		bvc gamelogic2		; no overflow so we didn't go below zero; skip to dealing with Y speed
+		sec					; subtract one but don't write it back unless it doesn't make us wrap
+		lda playerz
+		sbc #01
+		bcc gamelogic2		; branch if we had to borrow; don't wrap playerzlo below zero
 		sta playerz
+		
+
 gamelogic2
         ;
 		; y speed
@@ -190,10 +203,12 @@ gamelogic6b
 		; sbc playerzspeed
 		; sta playerzspeed
 gamelogic7
+		nop
         ; return and diagnostic output
 		; lda playery
 		; lda playeryspeed
 		; sta num0			;	XX -- testing -- num0 is playeryspeed
+gamelogic9
 		ENDM
 
 ;
@@ -909,10 +924,13 @@ collisions1a					; label just here for the unit tests
 
 collisions2
 		; okay, are we hitting our head?
-		lda playery
-		sec						; is our head exactly at the platform level?  bump.
-		sbc level0+2,y
-		bne collisions3			; not exactly so not hitting our head
+		lda level0+2,y
+		sec
+		sbc playery
+		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
+		cmp #1
+		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
+		jmp collisions3			; not exactly so not hitting our head
 collisions2a
 		; we're hitting our head on this platform
 		lda tmp1
@@ -921,20 +939,23 @@ collisions2a
 		jmp collisions8			; go on to the next platform
 
 collisions3
+		; start of tests where we aren't >= the start and <= the end of the platform
 		; are we walking in to this platform?
 		lda level0,y
 		clc
 		sbc playerz
-		bne collisions8
+		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
 		lda level0+2,y
 		cmp playery
-		bne collisions8
+		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
 collisions3a
 		; we're walking in to this platform
 		lda tmp1
 		ora #%00000010
 		sta tmp1
 		jmp collisions8			; go on to the next platform
+
+collisions4
 
 collisions8
 		; try another platform?

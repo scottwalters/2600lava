@@ -54,9 +54,9 @@ sub name_that_location {
 
 my $level0 = $symbols->level0 or die;
 for my $sym (
-        1, 11, 0x1e,  0xe0,
-        20, 25, 0x14, 0x60,
-        30, 40, 0x18, 0x20,
+        1, 11, 0x1e,  0xe0,          # 0 (0)
+        20, 25, 0x14, 0x60,          # 1 (4)
+        30, 40, 0x18, 0x20,          # 2 (8)
         0, 0, 0, 0,
 ) {
     $cpu->write_8( $level0++, $sym );
@@ -75,7 +75,7 @@ run_cpu( $symbols->collisions9 );
 is $cpu->read_8( $symbols->tmp2 ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
 
 # 
-# test hitting our head on a platform from below
+# test hitting our head on a platform from below (overlap)
 #
 
 $cpu->set_pc( $symbols->collisions);
@@ -87,6 +87,35 @@ run_cpu( $symbols->collisions9 );
 is $cpu->read_8( $symbols->tmp1 ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go upwards';
 is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
 
+# 
+# test hitting our head on a platform from below (one below)
+#
 
+$cpu->set_pc( $symbols->collisions);
+$cpu->write_8( $symbols->playerz, 20 );
+$cpu->write_8( $symbols->playery, 0x14-1 );   # one below platform level
+ 
+run_cpu( $symbols->collisions9 );
+
+is $cpu->read_8( $symbols->tmp1 ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go upwards from below';
+is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
+
+
+#
+# test walking in to a platform
+#
+
+$cpu->set_pc( $symbols->collisions);
+$cpu->write_8( $symbols->playerz, 20-1 );   # one unit before the platform starts
+$cpu->write_8( $symbols->playery, 0x14 );   # exactly at platform level
+ 
+run_cpu( $symbols->collisions9 );
+
+is $cpu->read_8( $symbols->tmp1 ), 0b00000010, 'collision logic decided that we are hitting our head and cannot go forward';
+is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
+
+#
+# 
+#
 
 done_testing();
