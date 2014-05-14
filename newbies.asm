@@ -121,54 +121,61 @@ flap_y		= %01111111;
 		;
 gamelogic0
 		lda playerzspeed
-		asl					; move the sign bit into carry
-		bcs gamelogic1		; negative vs positive code path
+		bmi gamelogic1
 		; positive case
 		clc
-		adc playerzlo		; add the shifted value to the low byte
+		adc playerzlo
 		sta playerzlo
+		bvc gamelogic2		; no overflow so we didn't go above 127; skip to dealing with Y speed
+		clc
 		lda playerz
-		adc #0				; positive so add 0 plus any carry
-		bcs gamelogic2		; don't write back to playerz if this addition would take it above $ff XXX actually, wouldn't this be the win condition for the level?
+		adc #01
+		bcs gamelogic2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
 ; XXX also don't write back to playerz if we're colliding with a platform
 		sta playerz
 		jmp gamelogic2
 gamelogic1
 		; playerzspeed is negative
-; XXX trying overflow; if this works, try to combine codepaths for positive and negative
-		lda playerzlo
-		adc playerzspeed
+		adc playerzlo
 		sta playerzlo
 		bvc gamelogic2		; no overflow so we didn't go below zero; skip to dealing with Y speed
 		sec					; subtract one but don't write it back unless it doesn't make us wrap
 		lda playerz
 		sbc #01
-		bcc gamelogic2		; branch if we had to borrow; don't wrap playerzlo below zero
+		bcc gamelogic2		; branch if we had to borrow; don't wrap playerz below zero
 		sta playerz
-		
 
 gamelogic2
         ;
 		; y speed
         ;
-		clc
 		lda playeryspeed
+		bmi gamelogic3
+		; positive case
+		clc
 		adc playerylo
 		sta playerylo
+		bvc gamelogic4		; no overflow so we didn't go above 127; skip to dealing with Y speed
+		clc
 		lda playery
-		bit playeryspeed	; reset the flags so we can test again if this is negative
-		bmi gamelogic3
-		adc #0				; positive so add 0
-		bcs gamelogic4		; don't write back to playery if this addition would take it above $ff
+		adc #01
+		bcs gamelogic4		; branch if we carried; don't wrap playery above 255
+; XXX also don't write back to playery if we're colliding with a platform
 		sta playery
 		jmp gamelogic4
 gamelogic3
-		adc #$ff			; negative so add $ff
-		beq gamelogic4		; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
+		; playeryspeed is negative
+		lda playerylo
+		adc playeryspeed
+		sta playerylo
+		bvc gamelogic4		; no overflow so we didn't go below zero
+		sec					; subtract one but don't write it back unless it doesn't make us wrap
+		lda playery
+		sbc #01
+		bcc gamelogic4		; branch if we had to borrow; don't wrap playerz below zero
 		sta playery
+		
 gamelogic4
-
-gamelogic6
 		;
 		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
 		;
