@@ -112,70 +112,70 @@ flap_y		= %01111111;
 
 
 ;
-; game logic
+; apply momentum
 ;
 
-		MAC _gamelogic
+		MAC _momentum
 		;
 		; z speed
 		;
-gamelogic0
+momentum0
 		lda playerzspeed
-		bmi gamelogic1
+		bmi momentum1
 		; positive case
 		clc
 		adc playerzlo
 		sta playerzlo
-		bvc gamelogic2		; no overflow so we didn't go above 127; skip to dealing with Y speed
+		bvc momentum2		; no overflow so we didn't go above 127; skip to dealing with Y speed
 		clc
 		lda playerz
 		adc #01
-		bcs gamelogic2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
+		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
 ; XXX also don't write back to playerz if we're colliding with a platform
 		sta playerz
-		jmp gamelogic2
-gamelogic1
+		jmp momentum2
+momentum1
 		; playerzspeed is negative
 		adc playerzlo
 		sta playerzlo
-		bvc gamelogic2		; no overflow so we didn't go below zero; skip to dealing with Y speed
+		bvc momentum2		; no overflow so we didn't go below zero; skip to dealing with Y speed
 		sec					; subtract one but don't write it back unless it doesn't make us wrap
 		lda playerz
 		sbc #01
-		bcc gamelogic2		; branch if we had to borrow; don't wrap playerz below zero
+		bcc momentum2		; branch if we had to borrow; don't wrap playerz below zero
 		sta playerz
 
-gamelogic2
+momentum2
         ;
 		; y speed
         ;
 		lda playeryspeed
-		bmi gamelogic3
+		bmi momentum3
 		; positive case
 		clc
 		adc playerylo
 		sta playerylo
-		bvc gamelogic4		; no overflow so we didn't go above 127; skip to dealing with Y speed
+		bvc momentum4		; no overflow so we didn't go above 127; skip to dealing with Y speed
 		clc
 		lda playery
 		adc #01
-		bcs gamelogic4		; branch if we carried; don't wrap playery above 255
+		bcs momentum4		; branch if we carried; don't wrap playery above 255
 ; XXX also don't write back to playery if we're colliding with a platform
 		sta playery
-		jmp gamelogic4
-gamelogic3
+		jmp momentum4
+momentum3
 		; playeryspeed is negative
 		lda playerylo
 		adc playeryspeed
 		sta playerylo
-		bvc gamelogic4		; no overflow so we didn't go below zero
+		bvc momentum4		; no overflow so we didn't go below zero
 		sec					; subtract one but don't write it back unless it doesn't make us wrap
 		lda playery
 		sbc #01
-		bcc gamelogic4		; branch if we had to borrow; don't wrap playerz below zero
+		bcc momentum4		; branch if we had to borrow; don't wrap playerz below zero
 		sta playery
 		
-gamelogic4
+momentum4
 		;
 		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
 		;
@@ -183,21 +183,21 @@ gamelogic4
 		sec
 		; sbc #%00000011 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX hold off on gravity for a bit
 		; sta num0 ; XX testing -- playeryspeed
-		bpl gamelogic6a		; still >0, so just save it 
+		bpl momentum6a		; still >0, so just save it 
 		;
 		; terminal volicity
 		;
 		cmp #%11100000		; 1.4.3.  $df terminal volicity.
-		; bcc gamelogic6b
-		bmi gamelogic6b
-gamelogic6a
+		; bcc momentum6b
+		bmi momentum6b
+momentum6a
 		sta playeryspeed
-gamelogic6b
+momentum6b
 		;
 		; XXX land on platform?  land on ground?
 		;
 		lda playerz
-		bpl gamelogic7
+		bpl momentum7
 		lda #0
 		sta playerz
 		sta playerzlo
@@ -209,13 +209,13 @@ gamelogic6b
 		; lda #0					; negate the result
 		; sbc playerzspeed
 		; sta playerzspeed
-gamelogic7
+momentum7
 		nop
         ; return and diagnostic output
 		; lda playery
 		; lda playeryspeed
 		; sta num0			;	XX -- testing -- num0 is playeryspeed
-gamelogic9
+momentum9
 		ENDM
 
 ;
@@ -700,7 +700,8 @@ scoredone						; scanline 158, s.cycle 66
 		sta TIM64T
 
 		_readstick
-		_gamelogic
+		_collisions
+		_momentum
 
 		lda #0					; phase 0 in the vblank process
 		sta caller
@@ -890,19 +891,17 @@ vblanktimerendalmost
 ; collisions
 ;
 
-; XXX so far, only called from unit tests
+; detect collisions
 
 ; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
 
+		MAC _collisions
 collisions
-		; detect collisions XXXXXXXXXXXXX
 
 		ldy #$ff
 		sty tmp2				; use tmp2 to record which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
 		ldy #0
 		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
-		; sty deltaz	; don't think we need this
-		; sty curplat	; just keep it in Y?
 
 collisions1
 		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
@@ -974,7 +973,7 @@ collisions8
 		jmp collisions1
 
 collisions9
-		rts ; XXXX make this a macro
+		ENDM
 
 
 
