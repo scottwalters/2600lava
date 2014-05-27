@@ -115,6 +115,8 @@ flap_y		= %01111111;
 ; apply momentum
 ;
 
+; clobbers tmp1
+
 		MAC _momentum
 		;
 		; z speed
@@ -136,14 +138,17 @@ momentum0
 		jmp momentum2
 momentum1
 		; playerzspeed is negative
-		adc playerzlo
+		_absolute			; absolute value of playerzspeed
+		sta tmp1
+		lda playerzlo 
+		sec
+		sbc tmp1
 		sta playerzlo
-		bvc momentum2		; no overflow so we didn't go below zero; skip to dealing with Y speed
-		sec					; subtract one but don't write it back unless it doesn't make us wrap
 		lda playerz
-		sbc #01
-		bcc momentum2		; branch if we had to borrow; don't wrap playerz below zero
+		sbc #0				; if we barrowed above, this will effective decrement playerz by one
+		bmi momentum1a		; but don't go below 0
 		sta playerz
+momentum1a
 
 momentum2
         ;
@@ -165,15 +170,17 @@ momentum2
 		jmp momentum4
 momentum3
 		; playeryspeed is negative
-		lda playerylo
-		adc playeryspeed
+		_absolute			; absolute value of playeryspeed
+		sta tmp1
+		lda playerylo 
+		sec
+		sbc tmp1
 		sta playerylo
-		bvc momentum4		; no overflow so we didn't go below zero
-		sec					; subtract one but don't write it back unless it doesn't make us wrap
 		lda playery
-		sbc #01
-		bcc momentum4		; branch if we had to borrow; don't wrap playerz below zero
+		sbc #0				; if we barrowed above, this will effective decrement playery by one
+		bmi momentum3a		; but don't go below 0
 		sta playery
+momentum3a
 		
 momentum4
 		;
@@ -283,6 +290,95 @@ readstick7c
 		sta playeryspeed
 readstick8
 		ENDM
+
+;
+; collisions
+;
+
+; detect collisions
+
+; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
+
+		MAC _collisions
+collisions
+
+		ldy #$ff
+		sty tmp2				; use tmp2 to record which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
+		ldy #0
+		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
+
+collisions1
+		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
+
+		lda level0,y			; load the first byte, the Z start position, of the current platform
+		beq collisions9			; stop when there's no more platform data
+
+		; make sure we're >= the start of it and <= the end of it
+		lda playerz
+		cmp level0+0,y
+		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet
+		lda level0+1,y
+		cmp playerz
+		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
+
+		; our Z position overlaps the platform
+		; are we standing on this platform?
+		lda playery
+		clc						; our head is one unit above our feet, I guess, so subtract one extra
+		sbc level0+2,y			; subtract the 3rd byte, the platform height
+		bne collisions2			; branch if not exactly one unit above the platform height
+collisions1a					; label just here for the unit tests
+		; okay, we're standing on this platform!
+		sty tmp2
+		jmp collisions8			; go on to the next platform
+
+collisions2
+		; okay, are we hitting our head?
+		lda level0+2,y
+		sec
+		sbc playery
+		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
+		cmp #1
+		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
+		jmp collisions3			; not exactly so not hitting our head
+collisions2a
+		; we're hitting our head on this platform
+		lda tmp1
+		ora #%00000001
+		sta tmp1
+		jmp collisions8			; go on to the next platform
+
+collisions3
+		; start of tests where we aren't >= the start and <= the end of the platform
+		; are we walking in to this platform?
+		lda level0,y
+		clc
+		sbc playerz
+		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
+		lda level0+2,y
+		cmp playery
+		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
+collisions3a
+		; we're walking in to this platform
+		lda tmp1
+		ora #%00000010
+		sta tmp1
+		jmp collisions8			; go on to the next platform
+
+collisions4
+
+collisions8
+		; try another platform?
+		iny
+		iny
+		iny
+		iny
+		; sty curplat
+		jmp collisions1
+
+collisions9
+		ENDM
+
 
 ;
 ; _arctan (formerly platlinedelta)
@@ -886,95 +982,6 @@ vblanktimerendalmost
 		bne burntime
 		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
 		bne burntime			; branch always
-
-;
-; collisions
-;
-
-; detect collisions
-
-; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
-
-		MAC _collisions
-collisions
-
-		ldy #$ff
-		sty tmp2				; use tmp2 to record which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
-		ldy #0
-		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
-
-collisions1
-		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
-
-		lda level0,y			; load the first byte, the Z start position, of the current platform
-		beq collisions9			; stop when there's no more platform data
-
-		; make sure we're >= the start of it and <= the end of it
-		lda playerz
-		cmp level0+0,y
-		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet
-		lda level0+1,y
-		cmp playerz
-		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
-
-		; our Z position overlaps the platform
-		; are we standing on this platform?
-		lda playery
-		clc						; our head is one unit above our feet, I guess, so subtract one extra
-		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		bne collisions2			; branch if not exactly one unit above the platform height
-collisions1a					; label just here for the unit tests
-		; okay, we're standing on this platform!
-		sty tmp2
-		jmp collisions8			; go on to the next platform
-
-collisions2
-		; okay, are we hitting our head?
-		lda level0+2,y
-		sec
-		sbc playery
-		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
-		cmp #1
-		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
-		jmp collisions3			; not exactly so not hitting our head
-collisions2a
-		; we're hitting our head on this platform
-		lda tmp1
-		ora #%00000001
-		sta tmp1
-		jmp collisions8			; go on to the next platform
-
-collisions3
-		; start of tests where we aren't >= the start and <= the end of the platform
-		; are we walking in to this platform?
-		lda level0,y
-		clc
-		sbc playerz
-		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
-		lda level0+2,y
-		cmp playery
-		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
-collisions3a
-		; we're walking in to this platform
-		lda tmp1
-		ora #%00000010
-		sta tmp1
-		jmp collisions8			; go on to the next platform
-
-collisions4
-
-collisions8
-		; try another platform?
-		iny
-		iny
-		iny
-		iny
-		; sty curplat
-		jmp collisions1
-
-collisions9
-		ENDM
-
 
 
 ;

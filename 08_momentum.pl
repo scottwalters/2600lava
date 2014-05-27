@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 
-# test _gamelogic, which applies momentum
+# test _momentum
 
 use strict;
 use warnings;
@@ -54,6 +54,7 @@ sub name_that_location {
 
 my $level0 = $symbols->level0 or die;
 for my $sym (
+        # start Z, end Z, Y, color
         1, 11, 0x1e,  0xe0,          # 0 (0)
         20, 25, 0x14, 0x60,          # 1 (4)
         30, 40, 0x18, 0x20,          # 2 (8)
@@ -75,8 +76,8 @@ $cpu->write_8( $symbols->playerzspeed, 0x05 );
 $cpu->write_8( $symbols->playerylo, 0x00 );
 $cpu->write_8( $symbols->playeryspeed, 0x00 );
 
-$cpu->set_pc( $symbols->gamelogic0);
-run_cpu( $symbols->gamelogic4);
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
 
 is $cpu->read_8( $symbols->playerz), 20;        # unchanged
 is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
@@ -94,8 +95,8 @@ $cpu->write_8( $symbols->playerzspeed, 0x70 );  # adding those together should c
 $cpu->write_8( $symbols->playerylo, 0x00 );
 $cpu->write_8( $symbols->playeryspeed, 0x00 );
 
-$cpu->set_pc( $symbols->gamelogic0);
-run_cpu( $symbols->gamelogic4);
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
 
 is $cpu->read_8( $symbols->playerz), 21;        # changed
 is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
@@ -106,7 +107,7 @@ is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
 # XXX test Z momentum failing to move the player forward one unit because the space is occupied
 #
 
-# XXX need to call into collision detection and have it fall through to gamelogic/momentum
+# XXX need to call into collision detection and have it fall through to momentum
 
 #
 # test Z momentum moving the player backwards one unit
@@ -115,17 +116,19 @@ is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14+5 );
 
-$cpu->write_8( $symbols->playerzlo, 0x8f );
-$cpu->write_8( $symbols->playerzspeed, 0x8f );  # added together, they're 286.  adding those should carry and decrease playerz from 20 to 19.
+$cpu->write_8( $symbols->playerzlo, 0x20 );
+$cpu->write_8( $symbols->playerzspeed, 0xff - 0x20 );
 
 $cpu->write_8( $symbols->playerylo, 0x00 );
 $cpu->write_8( $symbols->playeryspeed, 0x00 );
 
-$cpu->set_pc( $symbols->gamelogic0);
-run_cpu( $symbols->gamelogic4);
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
 
 is $cpu->read_8( $symbols->playerz), 19;         # changed
 is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
+
+# diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo); # $ff
 
 #
 # test Y momentum moving the player forward up unit
@@ -140,11 +143,65 @@ $cpu->write_8( $symbols->playeryspeed, 0x70 );  # adding those together should c
 $cpu->write_8( $symbols->playerzlo, 0x00 );
 $cpu->write_8( $symbols->playerzspeed, 0x00 );
 
-$cpu->set_pc( $symbols->gamelogic0);
-run_cpu( $symbols->gamelogic4);
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
 
 is $cpu->read_8( $symbols->playerz), 20;        # unchanged
 is $cpu->read_8( $symbols->playery), 0x14+6;    # changed
+
+
+
+
+#
+# test Y momentum moving the player down up unit
+#
+
+#        20, 25, 0x14, 0x60,          # 1 (4)
+
+$cpu->write_8( $symbols->playerz, 20 );
+$cpu->write_8( $symbols->playery, 0x14+5 );   # 5 units above this platform
+
+$cpu->write_8( $symbols->playerylo, 0x30 );
+$cpu->write_8( $symbols->playeryspeed, 0xff - 0x30 );  # eg -0x30
+
+$cpu->write_8( $symbols->playerzlo, 0x00 );
+$cpu->write_8( $symbols->playerzspeed, 0x00 );
+
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
+
+is $cpu->read_8( $symbols->playerz), 20;        # unchanged
+is $cpu->read_8( $symbols->playery), 0x14+4;    # changed
+
+# diag sprintf "playerylo: %x\n", $cpu->read_8( $symbols->playerylo); # $ff
+
+
+
+
+#
+# test Y momentum failing to move us down one unit because we've collided with a platform
+#
+
+# 20, 25, 0x14, 0x60,          # 1 (4)
+
+$cpu->write_8( $symbols->playerz, 20 );
+$cpu->write_8( $symbols->playery, 0x14-1 );     # one unit above the platform; this should keep us from being able to go down XXX
+
+$cpu->write_8( $symbols->playerzlo, 0x70 );
+$cpu->write_8( $symbols->playerzspeed, 0x70 );  # adding those together should carry and increase playerz from 20 to 21
+
+$cpu->write_8( $symbols->playerylo, 0x00 );
+$cpu->write_8( $symbols->playeryspeed, 0x00 );
+
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
+
+is $cpu->read_8( $symbols->playerz), 21;        # changed
+is $cpu->read_8( $symbols->playery), 0x14-1;    # unchanged
+
+# diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo);
+
+
 
 
 
