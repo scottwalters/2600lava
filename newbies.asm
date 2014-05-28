@@ -22,8 +22,13 @@ num0    ds 1		; number to output, left
 tmp1	ds 1
 tmp2	ds 1
 
+; tmp1/tmp2 aliases
+
+scanline = tmp1 	; display kernel counts this down to zero and uses it to index the frame buffer
 NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
-scanline = tmp1 
+
+collision_bits = tmp1
+collision_platform = tmp2
 
 ; level render
 curplat		ds 1		; which platform we are rendering or considering; used as an index into the level0 table; incremented by 4 for each platform
@@ -45,7 +50,10 @@ view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $f
 viewsize	= [ $ff - view ]
 		ECHO "viewsize: ", [viewsize]d
 
-flap_y		= %01111111;
+flap_y		= $10		; $10 would take 16 frames to send us up one whole unitflap_z1		= $10;
+flap_z1		= $10
+flap_z2		= $08
+flap_z3		= $04
 
 ;
 ; macros
@@ -102,7 +110,7 @@ flap_y		= %01111111;
 		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
 		sta VBLANK
 
-		lda #44					; 36*76/64 = 42.75, plus one for the WSYNC at the end    XXXX these fractions are scary; 64*0.25 gives us 16 cycles to do this bullshit in before the WSYNC is maybe late; adjusting this to 44 instead based on experimenting with stella
+		lda #44					; 36*76/64 = 42.75, plus one for the WSYNC at the end ; these fractions are scary; 64*0.25 gives us 16 cycles to do this bullshit in before the WSYNC is maybe late; adjusting this to 44 instead based on experimenting with stella
 		sta TIM64T
 
 		inc caller				; run .vsync0 next time
@@ -234,61 +242,100 @@ momentum9
 		lda SWCHA
 		and #$f0
 		eor #$ff
-readstick0
+		tax					; cache the joystick bits in X
+
+		lda SWCHB
+		and #%00000010		; select switch
+		bne readstick0		; select switch enables test mode; branch to normal joystick logic if select switch is not pressed
+
+teststick0
+; readstick test mode; the joystick absolutely positions the player
+teststick0a
         ; bit 0 = up
-		tax
+		txa
 		and #%00010000
-		beq readsticka
+		beq teststick1
 		ldy playery
 		cpy #$ff
-		beq readsticka ; don't go over
-		inc playery ; XXX testing
-readsticka
+		beq teststick1 ; don't go over
+		inc playery
+teststick1
         ; bit 1 = down
 		txa
 		and #%00100000
-		beq readstickb
+		beq teststick5
 		ldy playery
 		cpy #$00
-		beq readstick5 ; don't go over
-		dec playery ; XXX testing
-readstickb
-		lda playery
-		; sta num0 ; XXXX
-readstick5
+		beq teststick5 ; don't go over
+		dec playery
+teststick5
 		; bit 2 = left
 		txa
 		and #%01000000
-		beq readstick6
-		inc playerz ; XXX testing
-readstick6
+		beq teststick6
+		inc playerz
+teststick6
 		; bit 3 = right
 		txa
 		and #%10000000
-		beq readstick7
-		dec playerz ; XXX testing
-readstick7
+		beq teststick7
+		dec playerz
+teststick7
+		jmp readstick9
+
+readstick0
 		; button
 		lda INPT4
-		bmi readstick8  ; branch if button up (bit 7 stays 1 until the trigger is pressed, then it stays 0)
-        ; button down -- make player go faster forward and upwards, mostly upwards
-        ; also, reset the joy latches
+		bmi readstick8			; branch if button not pressed (bit 7 stays 1 until the trigger is pressed, then it stays 0)
+        ; button down
+        ; reset the button latch
 		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
 		sta VBLANK
 		lda #%01000000
 		sta VBLANK
-		; XXX bump playerzspeed
-readstick7a
-readstick7b
-		; inc playery XXX should inc it more or less depending on whether they're pushing forward or back
+		; bump playerzspeed
+		lda playerzspeed
 		clc
+		adc flap_y				; $10 would take 16 frames to send us up one whole unit
+		bvs readstick1			; don't write it back if it would overflow
+		sta playerzspeed
+readstick1
+		; player is flapping; add more or less forward thrust depending on the stick
+        ; bit 0 = up, which we interpret as meaning to accelerate as much as possible forward
+		txa
+		and #%00010000
+		beq readstick2
 		lda playeryspeed
-		adc #flap_y
-		bvc readstick7c			; if there was no overflow, write the result back as-is
-		lda #%01111111			; clamp to max signed int 8
-readstick7c
+		clc
+		adc flap_z1
+		bvs readstick2			; don't write it back if it would overflow our signed playeryspeed
 		sta playeryspeed
+readstick2
+        ; bit 1 = down, which we take to mean to accelerate as little as possible forward
+		txa
+		and #%00100000
+		beq readstick4
+		lda playeryspeed
+		clc
+		adc flap_z3
+		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
+		sta playeryspeed
+readstick3
+		; neither forward nor back are pressed while flapping so accelerate forward a medium amount
+		lda playeryspeed
+		clc
+		adc flap_z2
+		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
+		sta playeryspeed
+readstick4
+		; end forward/back/neutral stick testing during flap
+		jmp readstick9
+
 readstick8
+		; button not pressed; forward/backwards only apply if we're on a platform XXXX
+; XXXX
+
+readstick9
 		ENDM
 
 ;
@@ -298,14 +345,15 @@ readstick8
 ; detect collisions
 
 ; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
+; generally, that means zero'ing out momentum, or maybe making them bounce
 
 		MAC _collisions
 collisions
 
 		ldy #$ff
-		sty tmp2				; use tmp2 to record which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
+		sty collision_platform	; which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
 		ldy #0
-		sty tmp1				; use tmp1 for collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
+		sty collision_bits				; collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
 
 collisions1
 		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
@@ -316,7 +364,7 @@ collisions1
 		; make sure we're >= the start of it and <= the end of it
 		lda playerz
 		cmp level0+0,y
-		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet
+		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet; go see if we're walking in to it and other tests
 		lda level0+1,y
 		cmp playerz
 		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
@@ -329,7 +377,13 @@ collisions1
 		bne collisions2			; branch if not exactly one unit above the platform height
 collisions1a					; label just here for the unit tests
 		; okay, we're standing on this platform!
-		sty tmp2
+		sty collision_platform				; record which platform we're standing on
+		; if Y momentum is downward (negative), zero it
+		lda playeryspeed
+		bpl collisions1b
+		lda #0
+		sta playeryspeed
+collisions1b
 		jmp collisions8			; go on to the next platform
 
 collisions2
@@ -343,9 +397,9 @@ collisions2
 		jmp collisions3			; not exactly so not hitting our head
 collisions2a
 		; we're hitting our head on this platform
-		lda tmp1
+		lda collision_bits
 		ora #%00000001
-		sta tmp1
+		sta collision_bits
 		jmp collisions8			; go on to the next platform
 
 collisions3
@@ -360,9 +414,9 @@ collisions3
 		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
 collisions3a
 		; we're walking in to this platform
-		lda tmp1
+		lda collision_bits
 		ora #%00000010
-		sta tmp1
+		sta collision_bits
 		jmp collisions8			; go on to the next platform
 
 collisions4
@@ -787,7 +841,7 @@ scoredone						; scanline 158, s.cycle 66
 		sta PF1
 		sta WSYNC
 
-; XXXX I think we're at 123 scanlines at this point; double check that
+; I think we're at 123 scanlines at this point; double check that
 ; if so, that leaves 69 scanlines
 ; stella is saying we're 258 instead of 262 so bumping this up by 4 to 73... that's 1 too many so up to 72 then... okay, that lands us at 262
 ; plus 34 more scanlines for overscan
@@ -795,8 +849,8 @@ scoredone						; scanline 158, s.cycle 66
 		lda #120					; = 72+34 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 125.875 and the WSYNC rounds up to the next scanline; tweaking based on experimenting with stella
 		sta TIM64T
 
-		_readstick
 		_collisions
+		_readstick
 		_momentum
 
 		lda #0					; phase 0 in the vblank process
