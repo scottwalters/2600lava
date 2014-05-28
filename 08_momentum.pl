@@ -190,18 +190,18 @@ is $cpu->read_8( $symbols->playery), 0x14+4;    # changed
 $cpu->write_8( $symbols->SWCHA, 0xff );         # neither joystick is pushed any direction
 
 $cpu->write_8( $symbols->playerz, 20 );
-$cpu->write_8( $symbols->playery, 0x14+1 );     # one unit above the platform; this should keep us from being able to go down XXX
+$cpu->write_8( $symbols->playery, 0x14+1 );     # one unit above the platform; this should keep us from being able to go down
 
 $cpu->write_8( $symbols->playerzlo, 0 );
 $cpu->write_8( $symbols->playerzspeed, 0 );
 
 $cpu->write_8( $symbols->playerylo, 0x30 );
-$cpu->write_8( $symbols->playeryspeed, 0xff - 0x30 );  # eg -0x30
+$cpu->write_8( $symbols->playeryspeed, 0xff - 0x31 );  # eg -0x31
 
 $cpu->set_pc( $symbols->collisions );
 # $debug = 1;
 run_cpu( $symbols->collisions9 );
-$debug = 0;
+# $debug = 0;
 
 is $cpu->read_8( $symbols->collision_platform ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
 
@@ -211,6 +211,8 @@ run_cpu( $symbols->momentum4 );
 
 is $cpu->read_8( $symbols->playerz), 20;        # unchanged
 is $cpu->read_8( $symbols->playery), 0x14+1;    # unchanged
+
+is $cpu->read_8( $symbols->playeryspeed), 0;    # downward momentum zero'd out
 
 # diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo);
 
