@@ -17,6 +17,8 @@ use Carp; $SIG{__DIE__} = sub { Carp::confess @_ };
 
 use PadWalker;
 
+my $debug = 0;
+
 my $symbols = symbols::symbols('newbies.lst');
 
 my $cpu = Acme::6502->new();
@@ -28,8 +30,8 @@ sub run_cpu {
     $cpu->run(10000, sub {
         my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
         my $name = name_that_location($pc);
-        # diag $name if $name !~ m/unknown/;
-        # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
+        diag $name . ':' if $name !~ m/unknown/ and $debug;
+        diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y if $debug;
         if( grep $pc == $_, @stop_symbols ) {
             ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
         }
@@ -182,22 +184,33 @@ is $cpu->read_8( $symbols->playery), 0x14+4;    # changed
 # test Y momentum failing to move us down one unit because we've collided with a platform
 #
 
+# start Z, end Z, Y, color
 # 20, 25, 0x14, 0x60,          # 1 (4)
 
+$cpu->write_8( $symbols->SWCHA, 0xff );         # neither joystick is pushed any direction
+
 $cpu->write_8( $symbols->playerz, 20 );
-$cpu->write_8( $symbols->playery, 0x14-1 );     # one unit above the platform; this should keep us from being able to go down XXX
+$cpu->write_8( $symbols->playery, 0x14+1 );     # one unit above the platform; this should keep us from being able to go down XXX
 
-$cpu->write_8( $symbols->playerzlo, 0x70 );
-$cpu->write_8( $symbols->playerzspeed, 0x70 );  # adding those together should carry and increase playerz from 20 to 21
+$cpu->write_8( $symbols->playerzlo, 0 );
+$cpu->write_8( $symbols->playerzspeed, 0 );
 
-$cpu->write_8( $symbols->playerylo, 0x00 );
-$cpu->write_8( $symbols->playeryspeed, 0x00 );
+$cpu->write_8( $symbols->playerylo, 0x30 );
+$cpu->write_8( $symbols->playeryspeed, 0xff - 0x30 );  # eg -0x30
 
-$cpu->set_pc( $symbols->momentum0);
-run_cpu( $symbols->momentum4);
+$cpu->set_pc( $symbols->collisions );
+# $debug = 1;
+run_cpu( $symbols->collisions9 );
+$debug = 0;
 
-is $cpu->read_8( $symbols->playerz), 21;        # changed
-is $cpu->read_8( $symbols->playery), 0x14-1;    # unchanged
+is $cpu->read_8( $symbols->collision_platform ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
+
+# resume execution...
+
+run_cpu( $symbols->momentum4 );
+
+is $cpu->read_8( $symbols->playerz), 20;        # unchanged
+is $cpu->read_8( $symbols->playery), 0x14+1;    # unchanged
 
 # diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo);
 
