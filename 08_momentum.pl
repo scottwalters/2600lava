@@ -106,12 +106,6 @@ is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
 # diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo);
 
 #
-# XXX test Z momentum failing to move the player forward one unit because the space is occupied
-#
-
-# XXX need to call into collision detection and have it fall through to momentum
-
-#
 # test Z momentum moving the player backwards one unit
 #
 
@@ -258,8 +252,6 @@ is $cpu->read_8( $symbols->playeryspeed), 0xff - 0x70;    # upwards momentum tur
 
 # start Z, end Z, Y, color
 # 20, 25, 0x14, 0x60,          # 1 (4)
-
-# XXXXXXXXXXXX
 
 $cpu->write_8( $symbols->playerz, 20-1 );
 $cpu->write_8( $symbols->playery, 0x14 );
