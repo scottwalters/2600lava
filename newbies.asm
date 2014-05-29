@@ -74,6 +74,18 @@ flap_z3		= $04
 		ENDM
 
 ;
+; _cleartrigger
+;
+
+; clear out latched joystick button presses
+
+		MAC _cleartrigger
+		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
+		sta VBLANK
+		lda #%01000000
+		sta VBLANK
+		ENDM
+;
 ; vsync/vblank
 ;
 
@@ -237,12 +249,11 @@ momentum9
 ; readstick
 ;
 
+; expects the joystick bits (1 = pushed that direction) in X
+; bit 3 = right, bit 2 = left, bit 1 = down, bit 0 = up, one stick per nibble
+; we're looking at the left nibble here, which is the left stick 
+
 		MAC _readstick
-		; bit 3 = right, bit 2 = left, bit 1 = down, bit 0 = up, one stick per nibble
-		lda SWCHA
-		and #$f0
-		eor #$ff
-		tax					; cache the joystick bits in X
 
 		lda SWCHB
 		and #%00000010		; select switch
@@ -288,11 +299,7 @@ readstick0
 		lda INPT4
 		bmi readstick8			; branch if button not pressed (bit 7 stays 1 until the trigger is pressed, then it stays 0)
         ; button down
-        ; reset the button latch
-		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
-		sta VBLANK
-		lda #%01000000
-		sta VBLANK
+		_cleartrigger			; reset the joystick button latch
 		; bump playerzspeed
 		lda playerzspeed
 		clc
@@ -350,10 +357,16 @@ readstick9
 		MAC _collisions
 collisions
 
+		; cache the joystick bits in X
+		lda SWCHA
+		and #$f0
+		eor #$ff
+		tax
+
 		ldy #$ff
 		sty collision_platform	; which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
 		ldy #0
-		sty collision_bits				; collision bits; bit 0 means we can't go up; bit 1 means we can't go forward
+		sty collision_bits				; collision bits; bit 0 means we can't go up; bit 1 means we can't go forward; bit 2 means we can't go down
 
 collisions1
 		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
@@ -374,7 +387,7 @@ collisions1
 		lda playery
 		clc						; our head is one unit above our feet, I guess, so subtract one extra
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		bne collisions2			; branch if not exactly one unit above the platform height
+		bne collisions2			; branch to the next collision test if not exactly one unit above the platform height
 collisions1a					; label just here for the unit tests
 		; okay, we're standing on this platform!
 		sty collision_platform				; record which platform we're standing on
@@ -384,7 +397,7 @@ collisions1a					; label just here for the unit tests
 		lda #0
 		sta playeryspeed
 collisions1b
-		jmp collisions8			; go on to the next platform
+		jmp collisions8			; go on to the next platform; it's only possible to be running into, standing on, or hitting your head on any given platform so as soon as we find one of these cases, we know we can go on to the next platform
 
 collisions2
 		; okay, are we hitting our head?
@@ -394,13 +407,19 @@ collisions2
 		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
 		cmp #1
 		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
-		jmp collisions3			; not exactly so not hitting our head
+		jmp collisions3			; not exactly so we're not hitting our head; go to the next collision test
 collisions2a
 		; we're hitting our head on this platform
 		lda collision_bits
 		ora #%00000001
 		sta collision_bits
-		jmp collisions8			; go on to the next platform
+		; if Y momentum is upwards (positive), negate it
+		lda playeryspeed
+		bmi collisions2b
+		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
+		sta playeryspeed		; and now we're going down!
+collisions2b
+		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
 
 collisions3
 		; start of tests where we aren't >= the start and <= the end of the platform
@@ -417,9 +436,22 @@ collisions3a
 		lda collision_bits
 		ora #%00000010
 		sta collision_bits
-		jmp collisions8			; go on to the next platform
+		; if Z momentum is forward (positive), negate it
+		lda playerzspeed
+		bmi collisions3b
+		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
+		sta playerzspeed		; and now we're going backwards!
+collisions3b
+		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
 
 collisions4
+		; XXX test to see if we're colliding with an enemy bird
+		jmp collisions8
+
+collisions7
+		; control is sent here when we've run in to something (but not when we've landed on something)
+		_cleartrigger			; reset the joystick button latch to keep the player from flapping
+		; fall through to collisions8
 
 collisions8
 		; try another platform?
@@ -427,7 +459,6 @@ collisions8
 		iny
 		iny
 		iny
-		; sty curplat
 		jmp collisions1
 
 collisions9

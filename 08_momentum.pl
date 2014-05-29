@@ -133,7 +133,7 @@ is $cpu->read_8( $symbols->playery), 0x14+5;    # unchanged
 # diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo); # $ff
 
 #
-# test Y momentum moving the player forward up unit
+# test Y momentum moving the player forward one unit
 #
 
 $cpu->write_8( $symbols->playerz, 20 );
@@ -155,7 +155,7 @@ is $cpu->read_8( $symbols->playery), 0x14+6;    # changed
 
 
 #
-# test Y momentum moving the player down up unit
+# test Y momentum moving the player down one unit
 #
 
 #        20, 25, 0x14, 0x60,          # 1 (4)
@@ -217,6 +217,72 @@ is $cpu->read_8( $symbols->playeryspeed), 0;    # downward momentum zero'd out
 # diag sprintf "playerzlo: %x\n", $cpu->read_8( $symbols->playerzlo);
 
 
+
+#
+# test Y momentum failing to move up one unit because we're hitting our head on a platform
+#
+
+# start Z, end Z, Y, color
+# 20, 25, 0x14, 0x60,          # 1 (4)
+
+$cpu->write_8( $symbols->SWCHA, 0xff );         # neither joystick is pushed any direction
+
+$cpu->write_8( $symbols->playerz, 20 );
+$cpu->write_8( $symbols->playery, 0x14-1 );     # one unit below the platform; this should keep us from being able to go up
+
+$cpu->write_8( $symbols->playerzlo, 0 );
+$cpu->write_8( $symbols->playerzspeed, 0 );
+
+$cpu->write_8( $symbols->playerylo, 0x71 );
+$cpu->write_8( $symbols->playeryspeed, 0x70 ); # adding these together should carry, but if/when 0x70 gets negated, 0x71 will be larger than it so we won't immediately go down
+
+$cpu->set_pc( $symbols->collisions );
+run_cpu( $symbols->collisions9 );
+
+is $cpu->read_8( $symbols->collision_bits ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go up';
+
+# resume execution...
+
+run_cpu( $symbols->momentum4 );
+
+is $cpu->read_8( $symbols->playerz), 20;        # unchanged
+is $cpu->read_8( $symbols->playery), 0x14-1;    # unchanged
+
+is $cpu->read_8( $symbols->playeryspeed), 0xff - 0x70;    # upwards momentum turned into downward momentum
+
+
+
+#
+# test Z momentum failing to move the player forward one unit when they run in to the front of a platform
+#
+
+# start Z, end Z, Y, color
+# 20, 25, 0x14, 0x60,          # 1 (4)
+
+# XXXXXXXXXXXX
+
+$cpu->write_8( $symbols->playerz, 20-1 );
+$cpu->write_8( $symbols->playery, 0x14 );
+
+$cpu->write_8( $symbols->playerzlo, 0x71 );
+$cpu->write_8( $symbols->playerzspeed, 0x70 );  # adding those together should carry, but subtracting 0x70 from 0x71 (after we bounce off of the platform) should avoid rolling over
+
+$cpu->write_8( $symbols->playerylo, 0x00 );
+$cpu->write_8( $symbols->playeryspeed, 0x00 );
+
+$cpu->set_pc( $symbols->collisions );
+run_cpu( $symbols->collisions9 );
+
+is $cpu->read_8( $symbols->collision_bits ), 0b00000010, 'collision logic decided that we are hitting our head and cannot go forward';
+is $cpu->read_8( $symbols->collision_platform ), 0xff, 'not standing on anything';
+
+$cpu->set_pc( $symbols->momentum0);
+run_cpu( $symbols->momentum4);
+
+is $cpu->read_8( $symbols->playerz), 20-1;    # unchanged
+is $cpu->read_8( $symbols->playery), 0x14;    # unchanged
+
+is $cpu->read_8( $symbols->playerzspeed), 0xff - 0x70;    # forward momentum turned into backwards momentum
 
 
 
