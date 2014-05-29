@@ -15,6 +15,8 @@ use warnings;
 #     30 U0089		       00 87	   collision_bits =	tmp1
 #     31 U0089		       00 88	   collision_platform =	tmp2
 
+#     62 U00ff		       00 e0	   terminal_velocity =	$ff - $1f	; ie -$1f
+
 sub symbols {
 
     my $fn = shift;
@@ -31,7 +33,7 @@ sub symbols {
         } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t\t +00 00 00 00\*(\w+)/ ) { # this shit is just wonky
             $symbols{$2} = hex($1);
         #                                   31 U0089                00            88               collision_platform = tmp2
-        } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t{2} *([0-9a-f]{2}) ([0-9a-f]{2})\t *(\w+)\s*=\s*(\w+)/ ) {
+        } elsif( @line = $line =~ m/^[ 0-9]{7} U([a-z0-9]{4})\t{2} *([0-9a-f]{2}) ([0-9a-f]{2})\t *(\w+)\s*=\s*(.*)$/ ) {
             warn "$4 = $3";
             $symbols{$4} = hex($3);
         }
