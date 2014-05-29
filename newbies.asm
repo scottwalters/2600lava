@@ -50,10 +50,16 @@ view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $f
 viewsize	= [ $ff - view ]
 		ECHO "viewsize: ", [viewsize]d
 
-flap_y		= $10		; $10 would take 16 frames to send us up one whole unitflap_z1		= $10;
+;
+; momentum/gravity constants
+;
+
+flap_y		= $10		; $10 would take 16 frames to send us up one whole unit, if there was no decay
 flap_z1		= $10
 flap_z2		= $08
 flap_z3		= $04
+gravity		= $01
+terminal_velocity = $100 - $1f		; ie -$1f; $ff is -1
 
 ;
 ; macros
@@ -206,42 +212,30 @@ momentum4
 		;
 		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
 		;
+		; from the signed comparison tutorial at http://www.6502.org/tutorials/compare_beyond.html#5
+		; "to compare the signed numbers NUM1 and NUM2, the subtraction NUM1-NUM2 is performed, and NUM1 < NUM2 when N eor V is 1, and NUM1 >= NUM2 when N eor V is 0"
+		; this method takes advantage of N being the same (and based on) bit 7 of the sbc result in A.
 		lda playeryspeed
 		sec
-		; sbc #%00000011 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX hold off on gravity for a bit
-		; sta num0 ; XX testing -- playeryspeed
-		bpl momentum6a		; still >0, so just save it 
-		;
-		; terminal volicity
-		;
-		cmp #%11100000		; 1.4.3.  $df terminal volicity.
-		; bcc momentum6b
-		bmi momentum6b
-momentum6a
+		sbc #terminal_velocity
+		bvc momentum4a				; "f V is 0, N eor V = N, otherwise N eor V = N eor 1"
+		eor #%10000000				; flip the sign bit if V is clear; this makes sense, since the definition of V is that it gets set when the result leaves the sign bit wrong
+momentum4a
+		; "If the N flag is 1, then A (signed) < NUM (signed) and BMI will branch"
+        ; "If the N flag is 0, then A (signed) >= NUM (signed) and BPL will branch" 
+		bmi momentum4b				; if playeryspeed < terminal_velocity, branch to skip applying more gravity
+		lda playeryspeed			; apply gravity
+		sec
+		sbc #gravity
+		sta num0 ; XXX testing -- playeryspeed
+		; cap playeryspeed at terminal volicity
 		sta playeryspeed
-momentum6b
+momentum4b
 		;
-		; XXX land on platform?  land on ground?
+		; decay forward/backward momentum
 		;
-		lda playerz
-		bpl momentum7
-		lda #0
-		sta playerz
-		sta playerzlo
-		sta playerzspeed
-		; lda playerzspeed		; XXX okay, this logic isn't what's causing the bouncing
-		; cmp #128				; playerzspeed > 128, no barrow, carry is still set, and it gets rotated in
-		; ror
-		; sta playerzspeed
-		; lda #0					; negate the result
-		; sbc playerzspeed
-		; sta playerzspeed
-momentum7
+; XXXXXXXXXXX
 		nop
-        ; return and diagnostic output
-		; lda playery
-		; lda playeryspeed
-		; sta num0			;	XX -- testing -- num0 is playeryspeed
 momentum9
 		ENDM
 
@@ -303,7 +297,7 @@ readstick0
 		; bump playerzspeed
 		lda playerzspeed
 		clc
-		adc flap_y				; $10 would take 16 frames to send us up one whole unit
+		adc #flap_y				; $10 would take 16 frames to send us up one whole unit
 		bvs readstick1			; don't write it back if it would overflow
 		sta playerzspeed
 readstick1
@@ -314,7 +308,7 @@ readstick1
 		beq readstick2
 		lda playeryspeed
 		clc
-		adc flap_z1
+		adc #flap_z1
 		bvs readstick2			; don't write it back if it would overflow our signed playeryspeed
 		sta playeryspeed
 readstick2
@@ -324,14 +318,14 @@ readstick2
 		beq readstick4
 		lda playeryspeed
 		clc
-		adc flap_z3
+		adc #flap_z3
 		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
 		sta playeryspeed
 readstick3
 		; neither forward nor back are pressed while flapping so accelerate forward a medium amount
 		lda playeryspeed
 		clc
-		adc flap_z2
+		adc #flap_z2
 		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
 		sta playeryspeed
 readstick4
@@ -532,7 +526,6 @@ collisions9
 		asl
 		asl
         ora tmp1
-		; sta num0
 		tay
 		bit deltay				; handle the separate cases of the platform above us and the platform below us
 		bpl .platarctan1		; branch if deltay is positive; this means that the platform is lower than us

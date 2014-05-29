@@ -279,6 +279,57 @@ is $cpu->read_8( $symbols->playerzspeed), 0xff - 0x70;    # forward momentum tur
 
 
 #
+# test applying gravity when it doesn't make us hit terminal velocity
+#
+
+$cpu->write_8( $symbols->playeryspeed, 0 );  # not moving up or down, yet
+
+$cpu->set_pc( $symbols->momentum4 );
+run_cpu( $symbols->momentum9 );
+
+is $cpu->read_8( $symbols->playeryspeed ), 0xff;
+# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+
+$cpu->set_pc( $symbols->momentum4 );
+run_cpu( $symbols->momentum9 );
+
+is $cpu->read_8( $symbols->playeryspeed ), 0xfe;
+
+
+#
+# test applying gravity when it does make us hit terminal velocity
+#
+
+my $terminal_velocity = $symbols->terminal_velocity;   # constant
+diag "terminal velocity = " . sprintf "%x", $terminal_velocity;
+diag "terminal velocity = aka " . - ( 0xff - $terminal_velocity );
+
+my $gravity = $symbols->gravity;  # constant
+diag "gravity = $gravity";
+
+$cpu->write_8( $symbols->playeryspeed, $terminal_velocity + $gravity );
+
+$cpu->set_pc( $symbols->momentum4 );
+run_cpu( $symbols->momentum9 );
+
+# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity;
+
+$cpu->set_pc( $symbols->momentum4 );
+run_cpu( $symbols->momentum9 );
+
+# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity - 1;  # since the test is less-than, gravity gets applied one extra time to bring us to falling just faster than terminal velocity.
+
+$cpu->set_pc( $symbols->momentum4 );
+run_cpu( $symbols->momentum9 );
+
+# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity - 1;  # ... but then we don't accelerate any faster than one more than terminal velocity (or one less than, since it is a negative number)
+
+
+
+#
 # 
 #
 
