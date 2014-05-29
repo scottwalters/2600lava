@@ -59,7 +59,7 @@ flap_z1		= $10
 flap_z2		= $08
 flap_z3		= $04
 gravity		= $01
-terminal_velocity = $100 - $1f		; ie -$1f; $ff is -1
+terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
 ;
 ; macros
@@ -142,6 +142,7 @@ terminal_velocity = $100 - $1f		; ie -$1f; $ff is -1
 ;
 
 ; clobbers tmp1
+; we should be done with the collision_bits and collision_platform by now though
 
 		MAC _momentum
 		;
@@ -159,7 +160,6 @@ momentum0
 		lda playerz
 		adc #01
 		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
-; XXX also don't write back to playerz if we're colliding with a platform
 		sta playerz
 		jmp momentum2
 momentum1
@@ -191,7 +191,6 @@ momentum2
 		lda playery
 		adc #01
 		bcs momentum4		; branch if we carried; don't wrap playery above 255
-; XXX also don't write back to playery if we're colliding with a platform
 		sta playery
 		jmp momentum4
 momentum3
@@ -900,7 +899,7 @@ platlevelclear					; hit end of the level:  clear out all incremental stuff and 
 		; start over rendering
 
         ldy #0
-        sty num0  
+        ; sty num0  	; if we use it as a counter during rendering
 
 		sty deltaz
 		sty curplat
