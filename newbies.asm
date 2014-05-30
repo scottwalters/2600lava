@@ -54,7 +54,7 @@ viewsize	= [ $ff - view ]
 ; momentum/gravity constants
 ;
 
-flap_y		= $10		; $10 would take 16 frames to send us up one whole unit, if there was no decay
+flap_y		= $06		; $10 would take 16 frames to send us up one whole unit, if there was no decay
 flap_z1		= $10
 flap_z2		= $08
 flap_z3		= $04
@@ -149,6 +149,14 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 		; z speed
 		;
 momentum0
+
+		; skip applying momentum if the select switch is being held; debug mode
+		lda SWCHB
+		and #%00000010		; select switch
+		bne momentum0a		; branch over jmp to end if select switch is not being held
+		jmp momentum9
+momentum0a
+
 		lda playerzspeed
 		bmi momentum1
 		; positive case
@@ -226,15 +234,29 @@ momentum4a
 		lda playeryspeed			; apply gravity
 		sec
 		sbc #gravity
-		sta num0 ; XXX testing -- playeryspeed
+		; sta num0 ; testing -- playeryspeed
 		; cap playeryspeed at terminal volicity
 		sta playeryspeed
 momentum4b
 		;
 		; decay forward/backward momentum
 		;
-; XXXXXXXXXXX
-		nop
+momentum5
+		lda playerzspeed
+		beq momentum5c			; branch ahead if they aren't moving; there's nothing to decay;
+		bmi momentum5b 
+momentum5a
+		; player is moving forward; round towards zero
+		dec playerzspeed
+		jmp momentum5c
+momentum5b
+		; player is moving backwards; round towards zero
+		inc playerzspeed
+momentum5c
+		lda playerzspeed
+		; sta num0 ; testing -- playerzspeed
+		; done with forward/backward momentum decay
+
 momentum9
 		ENDM
 
@@ -293,40 +315,42 @@ readstick0
 		bmi readstick8			; branch if button not pressed (bit 7 stays 1 until the trigger is pressed, then it stays 0)
         ; button down
 		_cleartrigger			; reset the joystick button latch
-		; bump playerzspeed
-		lda playerzspeed
+		; bump playeryspeed
+		lda playeryspeed
 		clc
 		adc #flap_y				; $10 would take 16 frames to send us up one whole unit
 		bvs readstick1			; don't write it back if it would overflow
-		sta playerzspeed
+		sta playeryspeed
 readstick1
 		; player is flapping; add more or less forward thrust depending on the stick
         ; bit 0 = up, which we interpret as meaning to accelerate as much as possible forward
 		txa
 		and #%00010000
 		beq readstick2
-		lda playeryspeed
+		lda playerzspeed
 		clc
 		adc #flap_z1
 		bvs readstick2			; don't write it back if it would overflow our signed playeryspeed
-		sta playeryspeed
+		sta playerzspeed
+		jmp readstick4
 readstick2
         ; bit 1 = down, which we take to mean to accelerate as little as possible forward
 		txa
 		and #%00100000
-		beq readstick4
-		lda playeryspeed
+		beq readstick3			; if not pushing down either, then go to readstick3 which handles the neither forward nor backwards case
+		lda playerzspeed
 		clc
 		adc #flap_z3
 		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
-		sta playeryspeed
+		sta playerzspeed
+		jmp readstick4
 readstick3
 		; neither forward nor back are pressed while flapping so accelerate forward a medium amount
-		lda playeryspeed
+		lda playerzspeed
 		clc
 		adc #flap_z2
 		bvs readstick4			; don't write it back if it would overflow our signed playeryspeed
-		sta playeryspeed
+		sta playerzspeed
 readstick4
 		; end forward/back/neutral stick testing during flap
 		jmp readstick9
