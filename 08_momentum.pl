@@ -30,8 +30,9 @@ sub run_cpu {
     $cpu->run(10000, sub {
         my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
         my $name = name_that_location($pc);
+        diag sprintf "a = %s x = %s y = %x", $a, $x, $y if $debug;
         diag $name . ':' if $name !~ m/unknown/ and $debug;
-        diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y if $debug;
+        diag $symbols->source->[ $pc ] if $debug;
         if( grep $pc == $_, @stop_symbols ) {
             ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
         }
@@ -43,9 +44,9 @@ sub name_that_location {
     my $loc = shift;
     my %locations = reverse %$symbols;
     return $locations{$loc} if $locations{$loc};
-    return $locations{$loc-1} if $locations{$loc-1};
-    return $locations{$loc-2} if $locations{$loc-2};
-    return $locations{$loc-3} if $locations{$loc-3};
+    #return $locations{$loc-1} if $locations{$loc-1};
+    #return $locations{$loc-2} if $locations{$loc-2};
+    #return $locations{$loc-3} if $locations{$loc-3};
     return 'unknown location';
 }
 
@@ -285,12 +286,16 @@ is $cpu->read_8( $symbols->playerzspeed), 0xff - 0x70;    # forward momentum tur
 $cpu->write_8( $symbols->playeryspeed, 0 );  # not moving up or down, yet
 
 $cpu->set_pc( $symbols->momentum4 );
+$cpu->set_x( 0 ); # _momentum uses X to index which movable object it is currently working with
+$debug = 1;
 run_cpu( $symbols->momentum9 );
+$debug = 0;
 
 is $cpu->read_8( $symbols->playeryspeed ), 0xff;
 # diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
 
 $cpu->set_pc( $symbols->momentum4 );
+$cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
 is $cpu->read_8( $symbols->playeryspeed ), 0xfe;
@@ -310,18 +315,21 @@ diag "gravity = $gravity";
 $cpu->write_8( $symbols->playeryspeed, $terminal_velocity + $gravity );
 
 $cpu->set_pc( $symbols->momentum4 );
+$cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
 # diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
 is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity;
 
 $cpu->set_pc( $symbols->momentum4 );
+$cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
 # diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
 is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity - 1;  # since the test is less-than, gravity gets applied one extra time to bring us to falling just faster than terminal velocity.
 
 $cpu->set_pc( $symbols->momentum4 );
+$cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
 # diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
