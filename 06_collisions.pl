@@ -22,12 +22,17 @@ my $symbols = symbols::symbols('newbies.lst');
 my $cpu = Acme::6502->new();
 $cpu->load_rom( 'newbies.bin', 0xf000 );
 
+my $debug;
+
 sub run_cpu {
     my @stop_symbols = @_;
     my $cycles = 0;
     $cpu->run(10000, sub {
         my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
         my $name = name_that_location($pc);
+        diag sprintf "a = %s x = %s y = %x", $a, $x, $y if $debug;
+        diag $name . ':' if $name !~ m/unknown/ and $debug;
+        diag $symbols->source->[ $pc ] if $debug;
         # diag $name if $name !~ m/unknown/;
         # diag sprintf "pc = %x inst = %x a = %s x = %s y = %x", $pc, $inst, $a, $x, $y;
         if( grep $pc == $_, @stop_symbols ) {
@@ -41,9 +46,9 @@ sub name_that_location {
     my $loc = shift;
     my %locations = reverse %$symbols;
     return $locations{$loc} if $locations{$loc};
-    return $locations{$loc-1} if $locations{$loc-1};
-    return $locations{$loc-2} if $locations{$loc-2};
-    return $locations{$loc-3} if $locations{$loc-3};
+    #return $locations{$loc-1} if $locations{$loc-1};
+    #return $locations{$loc-2} if $locations{$loc-2};
+    #return $locations{$loc-3} if $locations{$loc-3};
     return 'unknown location';
 }
 
@@ -70,7 +75,7 @@ $cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14+1 );
  
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->tmp2 ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
 
@@ -82,7 +87,7 @@ $cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14 );   # exactly at platform level
  
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->tmp1 ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go upwards';
 is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
@@ -95,7 +100,7 @@ $cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20 );
 $cpu->write_8( $symbols->playery, 0x14-1 );   # one below platform level
  
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->tmp1 ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go upwards from below';
 is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';
@@ -109,7 +114,7 @@ $cpu->set_pc( $symbols->collisions);
 $cpu->write_8( $symbols->playerz, 20-1 );   # one unit before the platform starts
 $cpu->write_8( $symbols->playery, 0x14 );   # exactly at platform level
  
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->tmp1 ), 0b00000010, 'collision logic decided that we are hitting our head and cannot go forward';
 is $cpu->read_8( $symbols->tmp2 ), 0xff, 'not standing on anything';

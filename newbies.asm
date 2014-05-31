@@ -8,12 +8,18 @@
         SEG.U RAM_VARIABLES
         ORG $80
 
-playerz ds 1		; how far in to the maze
-playery	ds 1		; how close to splatting
-playerzlo ds 1		; fractal part of their position
-playerylo ds 1 
-playeryspeed ds 1  ; signed Y momentum
-playerzspeed ds 1  ; signed Z momentum
+playerz		ds 1		; how far in to the maze
+monster1z	ds 1
+playery		ds 1		; how close to splatting
+monster1y	ds 1
+playerzlo	ds 1		; fractal part of their position
+monster1zlo	ds 1
+playerylo	ds 1 
+monster1ylo	ds 1
+playeryspeed	ds 1  ; signed Y momentum
+monster1yspeed	ds 1
+playerzspeed	ds 1  ; signed Z momentum
+monster1zspeed	ds 1
 
 ; numeric output
 num0    ds 1		; number to output, left
@@ -35,9 +41,7 @@ curplat		ds 1		; which platform we are rendering or considering; used as an inde
 deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
 lastline	ds 1		; last line rendered to the screen for gap filling
-
-; faked jsr/rts
-caller		ds 1		; which routine to return to
+caller		ds 1		; vblank/vsync progress
 
 ; framebuffer
 view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
@@ -49,6 +53,8 @@ view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $f
 
 viewsize	= [ $ff - view ]
 		ECHO "viewsize: ", [viewsize]d
+
+num_bodies	= 2
 
 ;
 ; momentum/gravity constants
@@ -148,81 +154,84 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 		;
 		; z speed
 		;
-momentum0
+		ldx #0				; iterate over the objects to apply momentum to
+momentum
 
-		; skip applying momentum if the select switch is being held; debug mode
+		; skip applying momentum to the player if the select switch is being held; debug mode
 		lda SWCHB
 		and #%00000010		; select switch
 		bne momentum0a		; branch over jmp to end if select switch is not being held
 		jmp momentum9
 momentum0a
 
-		lda playerzspeed
+momentum0
+		; control loops back here when we iterate over the movable bodies
+		lda playerzspeed,x
 		bmi momentum1
 		; positive case
 		clc
-		adc playerzlo
-		sta playerzlo
+		adc playerzlo,x
+		sta playerzlo,x
 		bvc momentum2		; no overflow so we didn't go above 127; skip to dealing with Y speed
 		clc
-		lda playerz
+		lda playerz,x
 		adc #01
 		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
-		sta playerz
+		sta playerz,x
 		jmp momentum2
 momentum1
 		; playerzspeed is negative
 		_absolute			; absolute value of playerzspeed
 		sta tmp1
-		lda playerzlo 
+		lda playerzlo,x 
 		sec
 		sbc tmp1
-		sta playerzlo
-		lda playerz
+		sta playerzlo,x
+		lda playerz,x
 		sbc #0				; if we barrowed above, this will effective decrement playerz by one
 		bmi momentum1a		; but don't go below 0
-		sta playerz
+		sta playerz,x
 momentum1a
 
 momentum2
         ;
 		; y speed
         ;
-		lda playeryspeed
+		lda playeryspeed,x
 		bmi momentum3
 		; positive case
 		clc
-		adc playerylo
-		sta playerylo
+		adc playerylo,x
+		sta playerylo,x
 		bvc momentum4		; no overflow so we didn't go above 127; skip to dealing with Y speed
 		clc
-		lda playery
+		lda playery,x
 		adc #01
 		bcs momentum4		; branch if we carried; don't wrap playery above 255
-		sta playery
+		sta playery,x
 		jmp momentum4
 momentum3
 		; playeryspeed is negative
 		_absolute			; absolute value of playeryspeed
 		sta tmp1
-		lda playerylo 
+		lda playerylo,x 
 		sec
 		sbc tmp1
-		sta playerylo
-		lda playery
+		sta playerylo,x
+		lda playery,x
 		sbc #0				; if we barrowed above, this will effective decrement playery by one
 		bmi momentum3a		; but don't go below 0
-		sta playery
+		sta playery,x
 momentum3a
 		
 momentum4
 		;
-		; subtract gravity from vertical speed (and stop that damn bounce! and then add the bounce back in later!)
+		; subtract gravity from vertical speed
 		;
 		; from the signed comparison tutorial at http://www.6502.org/tutorials/compare_beyond.html#5
 		; "to compare the signed numbers NUM1 and NUM2, the subtraction NUM1-NUM2 is performed, and NUM1 < NUM2 when N eor V is 1, and NUM1 >= NUM2 when N eor V is 0"
 		; this method takes advantage of N being the same (and based on) bit 7 of the sbc result in A.
-		lda playeryspeed
+		lda playeryspeed,x
 		sec
 		sbc #terminal_velocity
 		bvc momentum4a				; "f V is 0, N eor V = N, otherwise N eor V = N eor 1"
@@ -231,33 +240,38 @@ momentum4a
 		; "If the N flag is 1, then A (signed) < NUM (signed) and BMI will branch"
         ; "If the N flag is 0, then A (signed) >= NUM (signed) and BPL will branch" 
 		bmi momentum4b				; if playeryspeed < terminal_velocity, branch to skip applying more gravity
-		lda playeryspeed			; apply gravity
+		lda playeryspeed,x			; apply gravity
 		sec
 		sbc #gravity
 		; sta num0 ; testing -- playeryspeed
 		; cap playeryspeed at terminal volicity
-		sta playeryspeed
+		sta playeryspeed,x
 momentum4b
 		;
 		; decay forward/backward momentum
 		;
 momentum5
-		lda playerzspeed
+		lda playerzspeed,x
 		beq momentum5c			; branch ahead if they aren't moving; there's nothing to decay;
 		bmi momentum5b 
 momentum5a
 		; player is moving forward; round towards zero
-		dec playerzspeed
+		dec playerzspeed,x
 		jmp momentum5c
 momentum5b
 		; player is moving backwards; round towards zero
-		inc playerzspeed
+		inc playerzspeed,x
 momentum5c
-		lda playerzspeed
-		; sta num0 ; testing -- playerzspeed
 		; done with forward/backward momentum decay
+		; lda playerzspeed
+		; sta num0 ; testing -- playerzspeed
 
 momentum9
+		inx
+		cpx #num_bodies
+		bcs momentum9a			; branch to exit if Y >= num_bodies
+		jmp momentum0			; else go back for another pass on the next movable body
+momentum9a
 		ENDM
 
 ;
@@ -273,6 +287,12 @@ momentum9
 		lda SWCHB
 		and #%00000010		; select switch
 		bne readstick0		; select switch enables test mode; branch to normal joystick logic if select switch is not pressed
+
+		; cache the joystick bits in X
+		lda SWCHA
+		and #$f0
+		eor #$ff
+		tax
 
 teststick0
 ; readstick test mode; the joystick absolutely positions the player
@@ -368,18 +388,19 @@ readstick9
 
 ; detect collisions
 
-; XXX rather than returning which platform we're interacting with, we probably want to just handle the interaction in-line here
+; we handle collisions in-line in logic in here
 ; generally, that means zero'ing out momentum, or maybe making them bounce
+; we also still set collision_platform and collision_bits but really just for unit testing at this point
+; we first loop over all of the movable objects that might collide with something (using X)
+; then we loop over all of the platforms it might collide with (using Y)
 
 		MAC _collisions
 collisions
+		ldx #num_bodies-1		; which movable object we're doing collisions for; do the monsters first and the player last so that the player's stuff is left to inspect for unit testing
 
-		; cache the joystick bits in X
-		lda SWCHA
-		and #$f0
-		eor #$ff
-		tax
-
+collisions0
+		; start examining a movable object
+		; reset collision registers
 		ldy #$ff
 		sty collision_platform	; which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
 		ldy #0
@@ -389,19 +410,19 @@ collisions1
 		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
 
 		lda level0,y			; load the first byte, the Z start position, of the current platform
-		beq collisions9			; stop when there's no more platform data
+		beq collisions9			; stop when there's no more platform data; or rather, go on to a possible next movable object
 
 		; make sure we're >= the start of it and <= the end of it
-		lda playerz
+		lda playerz,x
 		cmp level0+0,y
 		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet; go see if we're walking in to it and other tests
 		lda level0+1,y
-		cmp playerz
+		cmp playerz,x
 		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
 
 		; our Z position overlaps the platform
 		; are we standing on this platform?
-		lda playery
+		lda playery,x
 		clc						; our head is one unit above our feet, I guess, so subtract one extra
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
 		bne collisions2			; branch to the next collision test if not exactly one unit above the platform height
@@ -409,10 +430,10 @@ collisions1a					; label just here for the unit tests
 		; okay, we're standing on this platform!
 		sty collision_platform				; record which platform we're standing on
 		; if Y momentum is downward (negative), zero it
-		lda playeryspeed
+		lda playeryspeed,x
 		bpl collisions1b
 		lda #0
-		sta playeryspeed
+		sta playeryspeed,x
 collisions1b
 		jmp collisions8			; go on to the next platform; it's only possible to be running into, standing on, or hitting your head on any given platform so as soon as we find one of these cases, we know we can go on to the next platform
 
@@ -420,7 +441,7 @@ collisions2
 		; okay, are we hitting our head?
 		lda level0+2,y
 		sec
-		sbc playery
+		sbc playery,x
 		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
 		cmp #1
 		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
@@ -431,10 +452,10 @@ collisions2a
 		ora #%00000001
 		sta collision_bits
 		; if Y momentum is upwards (positive), negate it
-		lda playeryspeed
+		lda playeryspeed,x
 		bmi collisions2b
 		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
-		sta playeryspeed		; and now we're going down!
+		sta playeryspeed,x		; and now we're going down!
 collisions2b
 		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
 
@@ -443,10 +464,10 @@ collisions3
 		; are we walking in to this platform?
 		lda level0,y
 		clc
-		sbc playerz
+		sbc playerz,x
 		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
 		lda level0+2,y
-		cmp playery
+		cmp playery,x
 		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
 collisions3a
 		; we're walking in to this platform
@@ -454,10 +475,10 @@ collisions3a
 		ora #%00000010
 		sta collision_bits
 		; if Z momentum is forward (positive), negate it
-		lda playerzspeed
+		lda playerzspeed,x
 		bmi collisions3b
 		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
-		sta playerzspeed		; and now we're going backwards!
+		sta playerzspeed,x		; and now we're going backwards!
 collisions3b
 		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
 
@@ -479,6 +500,10 @@ collisions8
 		jmp collisions1
 
 collisions9
+		dex						; if there's a next movable body to do collisions on, do it
+		bmi collisions9a		; branch to exit if X < 0
+		jmp collisions0			; else go back for another pass on the next movable body
+collisions9a
 		ENDM
 
 
@@ -893,7 +918,8 @@ scoredone						; scanline 158, s.cycle 66
 ; stella is saying we're 258 instead of 262 so bumping this up by 4 to 73... that's 1 too many so up to 72 then... okay, that lands us at 262
 ; plus 34 more scanlines for overscan
 
-		lda #120					; = 72+34 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 125.875 and the WSYNC rounds up to the next scanline; tweaking based on experimenting with stella
+		; lda #120					; = 72+34 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 125.875 and the WSYNC rounds up to the next scanline; tweaking based on experimenting with stella
+		lda #127					; took away 6 lines; I don't know what the math works out to now, but stella says this puts us at 60fps
 		sta TIM64T
 
 		_collisions
@@ -1083,6 +1109,31 @@ vblanktimerendalmost
 		bne burntime
 		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
 		bne burntime			; branch always
+
+;
+; computedreturn
+;
+
+; XXXX not sure if we're actually going to use this again
+
+;computedreturn
+;		; this stupidity saves one byte of RAM versus JSR/RTS
+;		lda caller
+;		asl
+;		tax
+;		lda returntable,x
+;		sta tmp1
+;		lda returntable+1,x
+;		sta tmp2
+;		jmp (tmp1)
+
+;
+;              return address table
+;
+
+;returntable
+;               dc.w return0, return1, return2
+
 
 
 ;
@@ -1300,7 +1351,7 @@ distancemods
 ; okay, these get added to/subtracted from scanline 55 (given 110 scan lines) and we can't hit 110, only 109, so clamp it to 54
 ;
 ; use Math::Trig;
-; my $scanlines = 112;
+; my $scanlines = 107; # 112;
 ; my $max = int($scanlines / 2); $max-- if(( $scalines & 0b01) == 0);
 ; my $field_of_view_in_angles = 90;
 ; my $multiplier = $scanlines / $field_of_view_in_angles;
@@ -1332,35 +1383,35 @@ arctangent
                 ; z = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
                 dc.b 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0; y = 0
                 ; z = 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
-                dc.b 32, 22, 17, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 4, 4, 4; y = 1
+                dc.b 31, 21, 16, 13, 11, 9, 8, 7, 6, 6, 5, 5, 4, 4, 4, 4; y = 1
                 ; z = 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
-                dc.b 41, 32, 26, 22, 19, 17, 15, 13, 12, 11, 10, 9, 9, 8, 8, 7; y = 2
+                dc.b 40, 31, 25, 21, 18, 16, 14, 13, 12, 11, 10, 9, 9, 8, 7, 7; y = 2
                 ; z = 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
-                dc.b 45, 37, 32, 28, 25, 22, 20, 18, 17, 15, 14, 13, 12, 12, 11, 10; y = 3
+                dc.b 43, 36, 31, 27, 24, 21, 19, 18, 16, 15, 14, 13, 12, 11, 11, 10; y = 3
                 ; z = 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-                dc.b 47, 41, 36, 32, 29, 26, 24, 22, 20, 19, 18, 17, 16, 15, 14, 13; y = 4
+                dc.b 45, 40, 35, 31, 28, 25, 23, 21, 20, 18, 17, 16, 15, 14, 14, 13; y = 4
                 ; z = 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
-                dc.b 48, 43, 39, 35, 32, 29, 27, 25, 24, 22, 21, 20, 18, 18, 17, 16; y = 5
+                dc.b 47, 42, 38, 34, 31, 29, 26, 25, 23, 21, 20, 19, 18, 17, 16, 15; y = 5
                 ; z = 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
-                dc.b 49, 45, 41, 37, 34, 32, 30, 28, 26, 25, 23, 22, 21, 20, 19, 18; y = 6
+                dc.b 48, 43, 40, 36, 34, 31, 29, 27, 25, 24, 23, 21, 20, 19, 18, 18; y = 6
                 ; z = 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
-                dc.b 50, 46, 42, 39, 36, 34, 32, 30, 28, 27, 25, 24, 23, 22, 21, 20; y = 7
+                dc.b 48, 45, 41, 38, 35, 33, 31, 29, 28, 26, 25, 24, 22, 21, 20, 20; y = 7
                 ; z = 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
-                dc.b 50, 47, 44, 41, 38, 36, 34, 32, 30, 29, 27, 26, 25, 24, 23, 22; y = 8
+                dc.b 49, 45, 42, 40, 37, 35, 33, 31, 29, 28, 27, 25, 24, 23, 22, 21; y = 8
                 ; z = 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
-                dc.b 51, 48, 45, 42, 40, 37, 35, 34, 32, 30, 29, 28, 27, 26, 25, 24; y = 9
+                dc.b 49, 46, 43, 41, 38, 36, 34, 33, 31, 30, 28, 27, 26, 25, 24, 23; y = 9
                 ; z = 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
-                dc.b 51, 48, 45, 43, 41, 39, 37, 35, 33, 32, 31, 29, 28, 27, 26, 25; y = 10
+                dc.b 50, 47, 44, 42, 40, 38, 36, 34, 33, 31, 30, 29, 27, 26, 25, 25; y = 10
                 ; z = 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
-                dc.b 51, 49, 46, 44, 42, 40, 38, 36, 35, 33, 32, 31, 30, 29, 28, 27; y = 11
+                dc.b 50, 47, 45, 43, 41, 39, 37, 35, 34, 32, 31, 30, 29, 28, 27, 26; y = 11
                 ; z = 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
-                dc.b 52, 49, 47, 45, 43, 41, 39, 37, 36, 34, 33, 32, 31, 30, 29, 28; y = 12
+                dc.b 50, 48, 45, 43, 41, 40, 38, 36, 35, 34, 32, 31, 30, 29, 28, 27; y = 12
                 ; z = 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29
-                dc.b 52, 50, 47, 45, 43, 42, 40, 38, 37, 36, 34, 33, 32, 31, 30, 29; y = 13
+                dc.b 50, 48, 46, 44, 42, 40, 39, 37, 36, 35, 33, 32, 31, 30, 29, 28; y = 13
                 ; z = 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
-                dc.b 52, 50, 48, 46, 44, 42, 41, 39, 38, 36, 35, 34, 33, 32, 31, 30; y = 14
+                dc.b 51, 48, 46, 45, 43, 41, 40, 38, 37, 35, 34, 33, 32, 31, 30, 29; y = 14
                 ; z = 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
-                dc.b 52, 50, 48, 46, 45, 43, 41, 40, 39, 37, 36, 35, 34, 33, 32, 31; y = 15
+                dc.b 51, 49, 47, 45, 43, 42, 40, 39, 38, 36, 35, 34, 33, 32, 31, 30; y = 15
 
 ;
 ; platformcolors
