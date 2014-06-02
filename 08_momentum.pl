@@ -195,7 +195,7 @@ $cpu->write_8( $symbols->playeryspeed, 0xff - 0x31 );  # eg -0x31
 
 $cpu->set_pc( $symbols->collisions );
 # $debug = 1;
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 # $debug = 0;
 
 is $cpu->read_8( $symbols->collision_platform ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
@@ -232,7 +232,9 @@ $cpu->write_8( $symbols->playerylo, 0x71 );
 $cpu->write_8( $symbols->playeryspeed, 0x70 ); # adding these together should carry, but if/when 0x70 gets negated, 0x71 will be larger than it so we won't immediately go down
 
 $cpu->set_pc( $symbols->collisions );
-run_cpu( $symbols->collisions9 );
+# $debug = 1;
+run_cpu( $symbols->collisions9a );
+# $debug = 0;
 
 is $cpu->read_8( $symbols->collision_bits ), 0b00000001, 'collision logic decided that we are hitting our head and cannot go up';
 
@@ -264,7 +266,7 @@ $cpu->write_8( $symbols->playerylo, 0x00 );
 $cpu->write_8( $symbols->playeryspeed, 0x00 );
 
 $cpu->set_pc( $symbols->collisions );
-run_cpu( $symbols->collisions9 );
+run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->collision_bits ), 0b00000010, 'collision logic decided that we are hitting our head and cannot go forward';
 is $cpu->read_8( $symbols->collision_platform ), 0xff, 'not standing on anything';
@@ -287,9 +289,9 @@ $cpu->write_8( $symbols->playeryspeed, 0 );  # not moving up or down, yet
 
 $cpu->set_pc( $symbols->momentum4 );
 $cpu->set_x( 0 ); # _momentum uses X to index which movable object it is currently working with
-$debug = 1;
+# $debug = 1;
 run_cpu( $symbols->momentum9 );
-$debug = 0;
+# $debug = 0;
 
 is $cpu->read_8( $symbols->playeryspeed ), 0xff;
 # diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
