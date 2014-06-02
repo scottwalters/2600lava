@@ -61,9 +61,9 @@ num_bodies	= 2
 ;
 
 flap_y		= $06		; $10 would take 16 frames to send us up one whole unit, if there was no decay
-flap_z1		= $10
-flap_z2		= $08
-flap_z3		= $04
+flap_z1		= $06
+flap_z2		= $03
+flap_z3		= $00
 gravity		= $01
 terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
@@ -188,8 +188,8 @@ momentum1
 		sbc tmp1
 		sta playerzlo,x
 		lda playerz,x
+		beq momentum1a		; but don't go below 0
 		sbc #0				; if we barrowed above, this will effective decrement playerz by one
-		bmi momentum1a		; but don't go below 0
 		sta playerz,x
 momentum1a
 
@@ -219,8 +219,8 @@ momentum3
 		sbc tmp1
 		sta playerylo,x
 		lda playery,x
-		sbc #0				; if we barrowed above, this will effective decrement playery by one
-		bmi momentum3a		; but don't go below 0
+		beq momentum3a		; but if Y is already zero, don't subtract any more from it; just sit there
+		sbc #0				; if we borrowed above, this will effective decrement playery by one
 		sta playery,x
 momentum3a
 		
@@ -283,16 +283,17 @@ momentum9a
 ; we're looking at the left nibble here, which is the left stick 
 
 		MAC _readstick
-
-		lda SWCHB
-		and #%00000010		; select switch
-		bne readstick0		; select switch enables test mode; branch to normal joystick logic if select switch is not pressed
+readstick
 
 		; cache the joystick bits in X
 		lda SWCHA
 		and #$f0
 		eor #$ff
 		tax
+
+		lda SWCHB
+		and #%00000010		; select switch
+		bne readstick0		; select switch enables test mode; branch to normal joystick logic if select switch is not pressed
 
 teststick0
 ; readstick test mode; the joystick absolutely positions the player
@@ -377,7 +378,6 @@ readstick4
 
 readstick8
 		; button not pressed; forward/backwards only apply if we're on a platform XXXX
-; XXXX
 
 readstick9
 		ENDM
@@ -488,7 +488,10 @@ collisions4
 
 collisions7
 		; control is sent here when we've run in to something (but not when we've landed on something)
+		cpx #0
+		bne collisions7a		; don't reset the joystick button latch when monsters collide with things, only when the player does
 		_cleartrigger			; reset the joystick button latch to keep the player from flapping
+collisions7a
 		; fall through to collisions8
 
 collisions8
