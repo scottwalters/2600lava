@@ -36,7 +36,7 @@ sub run_cpu {
 }
 
 my $view = $symbols->view;
-my $viewsize = 0xff - 2 - $view;
+my $viewsize = 0xff - $view;
 
 #
 # draw one initial line
