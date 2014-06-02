@@ -61,10 +61,11 @@ num_bodies	= 2
 ;
 
 flap_y		= $06		; $10 would take 16 frames to send us up one whole unit, if there was no decay
-flap_z1		= $06
-flap_z2		= $03
+flap_z1		= $08
+flap_z2		= $05
 flap_z3		= $00
 gravity		= $01
+runspeed	= $06
 terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
 ;
@@ -378,6 +379,22 @@ readstick4
 
 readstick8
 		; button not pressed; forward/backwards only apply if we're on a platform XXXX
+		lda playeryspeed
+		bne readstick9			; skip joystick control if the player has any Y speed; this could also have been done with collision_platform but I'm avoiding depending on those and this would be the only dependency.  if we're on a platform, our Y speed got zerod, so use that as a sort of unreliable indicator.
+		txa
+		and #%00010000			; are we pushing up on the stick?
+		beq readstick8a			; branch to skip if not
+		lda #runspeed
+		sta playerzspeed		; rather than adding to speed, just set it; XXX would be better if we didn't do this if it would slow us down
+		jmp readstick9
+readstick8a
+		txa
+		and #%00100000			; are we pushing down on the stick?
+		beq readstick8b			; branch to skip if not
+		lda #-runspeed
+		sta playerzspeed		; rather than adding to speed, just set it
+readstick8b
+		; fall through to end
 
 readstick9
 		ENDM
@@ -751,6 +768,16 @@ collisions9a
 .plot9
 		ENDM
 
+;
+; _drawenemies
+;
+
+; update the frame buffer with enemy data
+		MAC _drawenemies
+; XXX
+		nop
+		ENDM
+
 
 
 ;
@@ -830,7 +857,7 @@ platforms
 		lda pf0lookup,x		; +4   16
 		sta PF0				; +3   19 ... this needs to happen sometime on or before cycle 22
 		lda pf1lookup,x		; +4   23
-		sta PF1				; +3   26 ... this needs to happen some time before cycle 28; cycle 24 is working
+		sta PF1				; +3   26 ... this needs to happen some time before cycle 28
 		lda pf2lookup,x		; +4   30
 		sta PF2				; +3   33
 renderpump
@@ -858,7 +885,7 @@ renderpump
         bne platforms		; +3    62
 
 renderdone
-		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the plast platform line
+		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the last platform line
 
 
 ;
@@ -928,6 +955,8 @@ scoredone						; scanline 158, s.cycle 66
 		_collisions
 		_readstick
 		_momentum
+		; XXX _ai
+		_drawenemies
 
 		lda #0					; phase 0 in the vblank process
 		sta caller
