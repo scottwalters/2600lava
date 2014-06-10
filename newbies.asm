@@ -22,37 +22,46 @@ playerzspeed	ds 1  ; signed Z momentum
 monster1zspeed	ds 1
 
 ; numeric output
+
 num0    ds 1		; number to output, left
 
 ; various
+
 tmp1	ds 1
 tmp2	ds 1
 
-; tmp1/tmp2 aliases
-
-scanline = tmp1 	; display kernel counts this down to zero and uses it to index the frame buffer
-NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
-
-collision_bits = tmp1
-collision_platform = tmp2
-
 ; level render
+
 curplat		ds 1		; which platform we are rendering or considering; used as an index into the level0 table; incremented by 4 for each platform
 deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
 lastline	ds 1		; last line rendered to the screen for gap filling
 caller		ds 1		; vblank/vsync progress
 
+; aliases
+
+; the display kernel re-uses render kernel locations
+scanline = caller 	; display kernel counts this down to zero and uses it to index the frame buffer
+skyline	= curplat	; offset in to the sky color data depending on our height
+
+NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
+
+collision_bits = tmp1
+collision_platform = tmp2
+
+; playerdata	= tmp1	; pointer to player graphic data used during render kernel XXX not currently doing this and can take this out unless we start doing that again
+; playerdatahi = tmp2
+
 ; framebuffer
+
 view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
 
+viewsize	= [ $ff - view ]
+		ECHO "viewsize: ", [viewsize]d
 
 ;
 ; constants
 ;
-
-viewsize	= [ $ff - view ]
-		ECHO "viewsize: ", [viewsize]d
 
 num_bodies	= 2
 
@@ -774,8 +783,17 @@ collisions9a
 
 ; update the frame buffer with enemy data
 		MAC _drawenemies
-; XXX
-		nop
+		ldy #1					; object 0 is the player; start at object 1
+.drawenemies1
+
+; XXX do stuff
+
+.drawenemies8
+		inx
+		cpx #num_bodies
+		bcs .drawenemies9		; branch to exit if Y >= num_bodies
+		jmp .drawenemies1		; else go back for another pass on the next movable body
+.drawenemies9
 		ENDM
 
 
@@ -794,7 +812,6 @@ collisions9a
 
 reset
 
-		sei                     ; Disable interrupts
 		cld                     ; Clear decimal bit
 
 		; initialize ram to 0
@@ -813,6 +830,7 @@ reset0  sta $80,x
 		ldy #32
 		sty playery
 
+		; some player setup
 
 
 ;
@@ -822,11 +840,11 @@ reset0  sta $80,x
 
 startofframe
 
-		lda #%01000000			; turn VBLANK off and leave the joystick latch on
-		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
-		sta VBLANK
+		; we turn VBLANK off here at the end of the line
 
-		lda #%00000101			; reflected playfield with priority over players
+		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
+
+		lda #%00000001			; reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
 		sta CTRLPF
 
 		ldy #viewsize			; indexes the view table and is our scanline counter
@@ -835,19 +853,106 @@ startofframe
 		lda playery				; 1/4th playery for picking background color for shaded sky/earth
 		lsr
 		lsr
-		sta tmp2
+		sta skyline
 
-		sta WSYNC				; scanline 38 (second drawable but again we don't draw anything)
-		jmp renderpump			; always
+		; use tmp1, tmp2 as a pointer to sprite data
+; XXX not currently doing this; currently subscripting enemybird directly
+;		lda #<enemybird			; low byte first XXX need to actually start past the graphics data so we default to not drawing the bird until instructed to do so
+;		sta playerdata
+;		lda #>enemybird			; 
+;		sta playerdata+1
+
+		; player gunk
+
+		lda #$55				; XXXX color of player; this could be moved to be at reset time too
+		sta COLUP0
+		sta RESP0				; XXXX move this around to be timed so that it positions P0 in the center of the screen; value doesn't matter; it's just a strobe
+
+		; XXX testing add some bird draw commands to the frame buffer
+		; lda #%11100101
+		; sta view+50				; remember this goes backwards, so that's 50 from the bottom
+		; lda #%11110101
+		; sta view+46
+		; lda #%11100001
+		; sta view+42
+
+		lda #%01000000			; turn VBLANK off near the end of line 37, leaving the joystick latch on
+		sta VBLANK
+
+		; wait for sync and then go to renderpump
+
+		sta WSYNC				;      0 ... stella considers this to be the first scanline.  we don't draw anything, just get things ready to draw on the next one.
+scanline1
+		nop						; +2   2
+		nop						; +2   4
+		nop						; +2   6
+		nop						; +2   8
+		nop						; +2  10 
+		nop						; +2  12
+		nop						; +2  14
+		nop						; +2  16 
+		nop						; +2  18
+		nop						; +2  20
+		nop						; +2  22
+		nop						; +2  24
+		nop						; +2  26
+		nop						; +2  28
+		nop						; +2  30 ... XXXX save some ROM space and do this in a loop
+		jmp renderpump			; +3     ... always; we need to arrive on cycle 33
+
+; table of useful NUSIZ0 values; translates two bits to three bits; the %11 index is unused
+nusize
+		.byte %00000000, %00000101, %00000111
+
+; critically timed render loop
+
+enemy
+		; XXX
+		; control goes here to turn on/off drawing of an enemy and set its width instead of drawing a platform line
+		; A and X contain the current view[] for this scan line; the last five bits contain data specific to this case
+		; Y is 0
+		; we aren't set up to update COLUBK and PF* registers
+		; there are exactly 47 cycles on the clock when execution arrives here
+
+		tay						; +2  49 (47 when we arrive) ... make a copy of the view[] entry
+
+; XXXX this doesn't seem to be working for some reason
+		and #%00000011			; +2  51 ... the bottom two bits cointain the sprite width; 000, 101, 111 are the only reasonable values to plug in to NUSIZ0
+		tax						; +2  53 ... XXX with a large-ish table with a lot of redundancy in it, we could avoid having to back up A in Y, mask part off, then reload it from Y again
+		lda nusize,x			; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
+		sta NUSIZ0				; +3  60
+
+		; update player graphics data
+test
+		tya						; +2  62
+		and #%00011100			; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
+		lsr						; +2  66 ... XXX this could be skipped
+		lsr						; +2  68 ... XXX this could be skipped
+		tay						; +2  70
+		lda enemybird,y			; +4  74
+		sta GRP0				; +3 ->1 (went up to 77 which rolls over 76 to 1; we head into hblank here and start a new scanline)
+		
+		; update background color; this is a duplicate of code from the other code path
+		lda scanline			; +3   4
+		adc skyline				; +3   7
+		tay						; +2   9
+		lda background,y		; +4  13
+		sta COLUBK				; +3  16 (has to happen before cycle 22)
+
+		dec scanline			; +5  21
+		bmi renderdone			; +2  23 (counting the case where the branch isn't taken); XXX double check this one
+
+		nop						; +2  25 XXX wasting time
+		nop						; +2  27
+		and #00					; +3  30 waste time
+		jmp renderpump			; +3  33 (have to get back to renderpump with exactly 33 cycles on the clock when we get there)
 
 platforms
 
-; high bit or something should indicate a bit of sprite
 ; we get 22 cycles before drawing starts, and then 76 total for the scan line
 ; 69 cycles; if we take out the wsync, we have 7 cycles left; that's enough to copy sprite data from a pre-computed table, but we already use all of our RAM.  argh.
 ; 62 cycles!  14 cycles to spare.
 
-		sta WSYNC			; +3   62
 		sty COLUPF			; +3    3
 
 		tay					; +2    5
@@ -866,25 +971,37 @@ renderpump
 
 ; to shave a few cycles and minimize moving things around, try to put the pf*lookup index into S instead, and COLUPF in A?  nope.
 ; would it be faster to put scanline back into RAM rather than trying to use S?
+; control arrives here with exactly 33 cycles on the clock
 
 		ldy scanline		; +3   36
 
 		; get value for COLUPF ready in Y
-		lax view,y			; +4   40 
+		lax view,y			; +4   40
 		ldy platformcolors,x; +4   44
 
+		; if the looked up color is $00, skip redrawing CULUPF, COLUBK, and the PF registers to instead update the player registers
+		beq enemy			; +2   46
+
 		; get the pf*lookup index ready in X
-		and #%00011111		; +2   46
-		tax					; +2   48
+		and #%00011111		; +2   48
+		tax					; +2   50
 
         ; get value for COLUBK somewhat setup in A
-		lda scanline		; +3   51
-		adc tmp2			; +3   54
+		lda scanline		; +3   53
+		adc skyline			; +3   56
 
-		dec scanline		; +5    59
-        bne platforms		; +3    62
+		nop					; +2   58 ... XXX 12 bonus cycles
+		nop					; +2   60
+		nop					; +2   62
+		nop					; +2   64
+		nop					; +2   66
+		nop					; +2   68
+
+		dec scanline		; +5   73
+		bpl platforms		; +3   76 (counting the case where it's taken; this has to come out to exactly 76 cycles)
 
 renderdone
+		; renderdone happens on line 145
 		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the last platform line
 
 
@@ -939,17 +1056,17 @@ VSCOR	sta  WSYNC              ; Start with a fresh scanline.
 		bne  VSCOR				; +5 taken
 scoredone						; scanline 158, s.cycle 66
 
+		; scoredone happens on scanline 154
+
 		lda #0
 		sta PF1
 		sta WSYNC
 
-; I think we're at 123 scanlines at this point; double check that
-; if so, that leaves 69 scanlines
-; stella is saying we're 258 instead of 262 so bumping this up by 4 to 73... that's 1 too many so up to 72 then... okay, that lands us at 262
+; 192 - 154
 ; plus 34 more scanlines for overscan
+; roughly:  n * 76 machine cycles / 64 cycle timer blocks
 
-		; lda #120					; = 72+34 scanlines * 76 machine cycles / the timer counts chunks of 64 clocks = 125.875 and the WSYNC rounds up to the next scanline; tweaking based on experimenting with stella
-		lda #127					; took away 6 lines; I don't know what the math works out to now, but stella says this puts us at 60fps
+		lda #125				; XXX I've been just tweaking this depending on what stella does
 		sta TIM64T
 
 		_collisions
@@ -985,12 +1102,12 @@ platlevelclear					; hit end of the level:  clear out all incremental stuff and 
 
 		sty deltaz
 		sty curplat
+		dey				; # make lastline $ff
 		sty lastline
-		dec lastline ; # make it $ff
 
 		; zero out the framebuffer
-		ldy #viewsize-1
-		ldx #0
+		ldy #viewsize
+		ldx #$00
 platlevelclear2
 		stx view,y
 		dey
@@ -1065,7 +1182,6 @@ platrenderline
 platrenderline1
 
 		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
-		; bmi platnext			; negative return value indicates that the angle is steeper than our field of view; since we're working backwards from the end of the platform towards ourselves, we know we won't be able to see any lines closer to us if we can't see this one, so just skip to platnext; we seem to be avoiding this situation currently so commenting this check out for now
 		tax
 		txs						; using the S register to store our value for curlineoffset
 
@@ -1446,6 +1562,24 @@ arctangent
                 dc.b 51, 49, 47, 45, 43, 42, 40, 39, 38, 36, 35, 34, 33, 32, 31, 30; y = 15
 
 ;
+;
+;
+
+enemybird
+
+		align 256
+
+		.byte %00000000
+		.byte %00011100
+		.byte %00011100
+		.byte %01001000
+		.byte %01111110
+		.byte %11111111
+		.byte %01111110
+		.byte %00100100
+
+
+;
 ; platformcolors
 ;
 
@@ -1456,6 +1590,7 @@ platformcolors
 ; 8 lines with 32 entries on each (but only the first 29 items on each line will ever be used)
 ; we want a log drop off
 ; not quite right; still dicking with this
+; 000..... is special; it tells the render kernel to update sprite data rather than platform data on that line; we need to return 0 in those cases
 
 
 ; use strict;
@@ -1489,7 +1624,8 @@ platformcolors
 		.byte %10011101, %10011101, %10011101, %10011100, %10011011, %10011011, %10011010, %10011010, %10011001, %10011001, %10011000, %10011000, %10010111, %10010110, %10010110, %10010101, %10010100, %10010100, %10010011, %10010010, %10010001, %10010001, %10010000, %10001111, %10001110, %10001101, %10001100, %10001010, %10001001, %10000111, %10000101, %10000000
 		.byte %10111101, %10111101, %10111101, %10111100, %10111011, %10111011, %10111010, %10111010, %10111001, %10111001, %10111000, %10111000, %10110111, %10110110, %10110110, %10110101, %10110100, %10110100, %10110011, %10110010, %10110001, %10110001, %10110000, %10101111, %10101110, %10101101, %10101100, %10101010, %10101001, %10100111, %10100101, %10100000
 		.byte %11011101, %11011101, %11011101, %11011100, %11011011, %11011011, %11011010, %11011010, %11011001, %11011001, %11011000, %11011000, %11010111, %11010110, %11010110, %11010101, %11010100, %11010100, %11010011, %11010010, %11010001, %11010001, %11010000, %11001111, %11001110, %11001101, %11001100, %11001010, %11001001, %11000111, %11000101, %11000000
-		.byte %11111101, %11111101, %11111101, %11111100, %11111011, %11111011, %11111010, %11111010, %11111001, %11111001, %11111000, %11111000, %11110111, %11110110, %11110110, %11110101, %11110100, %11110100, %11110011, %11110010, %11110001, %11110001, %11110000, %11101111, %11101110, %11101101, %11101100, %11101010, %11101001, %11100111, %11100101, %11100000
+;		.byte %11111101, %11111101, %11111101, %11111100, %11111011, %11111011, %11111010, %11111010, %11111001, %11111001, %11111000, %11111000, %11110111, %11110110, %11110110, %11110101, %11110100, %11110100, %11110011, %11110010, %11110001, %11110001, %11110000, %11101111, %11101110, %11101101, %11101100, %11101010, %11101001, %11100111, %11100101, %11100000
+		.byte         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,        0,          0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0,         0   ; 111..... is special
 
 ; upside down, to match the view buffer
 ; 22+ sets of 5 to match the 110 lines of frame buffer
@@ -1583,22 +1719,14 @@ perspectivetable
 ;
 
 level0
-        ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers)
+        ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers, and %000 is reserved)
         ; eg, this first one starts at 1, is 10 long, is 30 high, and is green
-		dc.b 1, 11, $1e,  $e0
+		; the color $e0 (aka $f0) is forbidden here; %11100000 indicates sprite data rather than platform data for that line
+		dc.b 1, 11, $1e,  $a0
 		dc.b 20, 25, $14, $60
 		dc.b 30, 40, $18, $20
 		dc.b 0, 0, 0, 0 		;       end
-		dc.b 0, 0, 0, 0 		;       end
-
-
- 		dc.b $fe  ; light green
-		dc.b $5c  ; pink
-		dc.b $6c  ; light purple
-		dc.b $b8  ; blue-green
-
-
-
+		dc.b 0, 0, 0, 0 		;       end XXX voodoo
 
 ;
 ;
