@@ -1,3 +1,46 @@
+breakif {_scan>#262}
+break ranoutoftime
+
+v/ _readstick needs to allow running along platform surfaces
+
+v/ _momentum loops over all of the movable objects (currently two)
+v/ _collisions need to iterate over movable objects
+    v/ collisions needs to not reset the joystick latches when monsters collide with things =P
+
+v/ re-working the vblank logic, I broke joystick button latching (which is part of the vblank enable register)
+   ... need to re-read how this is supposed to work
+   ... okay, writing a 1 to D6 of VBLANK enables latching; once enabled (or reset by turning off then on), INPT4 and 5 are high but go low and stay low on fire
+
+v/ physics is kinda fucked; revisit
+   ... playeryspeed is not handled comprehensively
+   ... handle as 2s compliment
+   ... check carry/zero in gamelogic to enforce floor/ceiling
+
+v/ the TIM32 timings are quite probably off by one or so
+   ... vblank, vsync early/late, etc
+
+v/ our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
+
+v/ land on platforms, bounce off of platforms when going up.
+   o. steal physics from flapping.20050207.asm?
+   v/ the flap and gravity routines need to look through the list of platforms (ugh)
+   o. no, we maybe just need to remember the position of the platform we're above/below
+       ... doesn't entirely help with running in to platforms, face first, but could be a good optimization
+   ... for the sake of rendering things, deltaz and deltay are relative to our eyes; our feet are probably lower down
+   o. could do this while rendering, but it would take an extra memory location to record the results
+
+v/ get the order of these right: _readstick _collisions _momentum
+   _collisions records which platform we're standing on in tmp2 and sets bits in tmp1 for other collisions
+       handles collisions in-line, such as by zeroing out or reversing momentum:  playeryspeed, playerzspeed
+       collisions also reset the joystick button latch to keep the user from flapping
+   _readstick 
+       modify playerxspeed playeryspeed
+   _momentum
+       apply momentum 
+       apply gravity
+       cap downward momentum at terminal velocity
+       decay forward/backward momentum
+
 o. write more tests
    ... need to test for more edge cases in plotonscreen
        ... what happens when we try to plot something of the same width
@@ -5,6 +48,87 @@ o. write more tests
            ... there's some resolution loss there; the perspectivetable table has 128 entries but line widths in it only does up to 19
                XXX could improve the resolution if we had duplicate entries in pf*lookup and used all five bits (up to 31) 
        ... what happens when we try to draw another line in the same platform on top of lastline
+
+$cpu->write_8( $symbols->platnextline0a+1, 16 ); directly determines whether shit gets fucked up or not.  huh.  how!?
+    ... aha.  needs *21* on the clock to always be safe.  otherwise, there may or may not be enough time left.
+    ... my guess is that it goes negative and beyond and the ranoutoftime check doesn't work properly so it keeps trying to do more lines
+        ... output curplat, deltaz, lastline
+        ... yup, correct.  it continues on from deltaz=2 to deltaz=1
+    XXX okay, we need to make timer expiring logic more intelligent, one way or another
+        ... if there's a lastline, make sure that abs(curline-lastline) > INTIM before we continue
+            ... do at 779 a version of what we do at 787... ok
+            ... at position 00, 0b, it runs for 266 scanlines
+                ... apparently, INTIM will have 00 on it when control goes to vblanktimerendalmost but A will get loaded with $FC and it'll loop down to 0 again
+                ... and caller is set to 1 when this happens
+                ... so what was the scanline at when we return when caller is 0?
+                    ... 225 vs 224.  so the first call is running long
+                        ... even though INTIM still has 5 on it at position 00, 0b
+            ... 00, 03 does this too when different values are plugged in
+        ... or else invert control like we were thinking of before
+v/  invert control
+    ... maybe we just need to be able to jump back in to the middle of the gap filling code and make that essentially our new 'platresume'
+        ... if we do that, we need to take in to account the worst case scenario of having to find the next line of the next platform
+    ... okay:  use 'caller' to track of vblank/vsync steps in middle of gap filling, and bail there if we completely run out of time
+        ... have to re-dispatch to one of two gap filling loops though!  or else include the macro twice.  or else update X/lastline so we can jump in to the top.
+            ... X (curline) moves towards lastline.  jumping in to the top should work.
+        ... have to take in to account the ~4 ticks needed to seek to the next platform line
+            fetching timer with 27 left on it at .plot9 curplat=0 deltaz=4 lastline=43
+            fetching timer with 25 left on it at unknown location curplat=0 deltaz=3 lastline=43
+            fetching timer with 23 left on it at .plot_up1 curplat=0 deltaz=3 lastline=42
+        ... this plan would make large amounts or all of 07_timer.pl obsolete
+        XXX still need to know/care about the worst case time if we have to seek from one platform line to another
+    ... caller = 0 = still in drawable plus 30 lines of overscan, 1 = 37 lines of vblank, then go to drawing kernel
+    ... search for references to vblanktimerendalmost; there are three
+    ... still need to burn CPU cycles when/if we finish drawing the level
+        ... test this
+    ... how to include the _vsync macro in _plotonscreen?
+        ... can't easily update lastline and come back in at the top, which would let us only include one copy: lastline gets updated from X, and we've been filling in and inc/dec'ing X towards lastline
+        ... or else include the _vsync macro twice?  A is available.  _vsync leaves the flags reading non-zero.  but this makes two branches go out of range.
+
+v/ fix scanline count
+   ... position 02, 20 (default starting)
+       ... scanline is 36 at 2.vsync0, s.cycle 45; 37 after a wsync; good
+       ... scanline is 259 at 1.vsync1; 260 after a wsync; vsync over 260, 261, 262; good
+   ... position 00, 1D
+       ... scanline is 36, s.cycle 42 at 1.vsync0; good
+       ... scanline is 259, s.cycle 38 at 1.vsync1; good
+    ... location 00, 00.
+        ... platnext0 is hitting on scanline 175, 176, 203, and 248
+        ... platnext0vblanktimer hits on scanline 248; INTIM is 0E
+            ... huh.  when we hit scanline 259, there's still 02 on INTIM.
+            ... how on earth does the time expire at different times depending on whether we finish rendering the platforms or run out of rendering time first?
+            ... with 1 tick left on INTIM, we're still on scanline 259
+            ... when we finally hit 0 ticks left, we're at scanline 260 s.cycle 25
+            ... ah.  TIM64T is loaded right after scoredone.  at scoredone, we're already a scanline behind.
+            ... we're on scanline 152 s.cycle 0 at 'score'; 00,1D hits 'score' at scanline 151 s.cycle 0
+            ... 00,00 hits startofframe at scanline 36 s.cycle 38; 00,1d hits it at scanline 36 s.cycle 45; same
+            ... 00,00 hits 'platforms' at scanline 39 s.cycle 62; 00, 1D hits it at scanline 38
+            sta WSYNC               ; scanline 38 (second drawable but again we don't draw anything)
+            jmp renderpump          ; always                <-- XXXX aha!  that was a bne but playery right shifted twice could be zero or non-zero
+    ... location 00, 00, redux
+        ... hits startofframe at scanline 36 cycle 48
+        ... scanline 37 at the immediately following WSYNC
+        ... scanline 38 at the WSYNC after storing tmp2
+        ... scanline 38 cycle 32 right before the first 'platforms' WSYNC
+        ... scanline 39 right after the first 'platforms' WSYNC
+        ... hits 'score' at scanline 151 cycle 0
+        ... hits 'scoredone' at scanline 158 cycle 66
+    ... 02, 1C was still fucking up
+        ... 'startofframe' happens at scanline 36 cycle 49
+        ... hits 'renderpump at scanline 38 cycle 3
+        ... hits 'platforms' at scanline 38 cycle 32
+        ... hits 'score' at scanline 151 cycle 0
+        ... hits 'scoredone' at scanline 158 cycle 66
+        ... hits 'platnextline' with INTIM with 0 on it already
+            ... too bad it isn't easy to test things to see if they're exactly equal to 1
+        ... scanline flips from 259 to 260 at 'platnextline0a' (cmp #5)
+            ... there are still 0C clicks (machine cycles) on the counter before it goess to $FF
+            ... makes sense that the 64 machine cycles covering the duration of the timer being '0' won't perfectly overlap with the middle of a scanline but instead will partially span 2
+        ... hits the 'beq .vsync1' in _vsync (2nd instruction in there) right as INTIM goes to $FF
+        ... hits '1.vsync1' at scanline 260 cycle 14 -- late!... INTIM is $FC at that point, apparently having wrapped.
+        ... not sure what I can do here other than not waste cycles and maybe WSYNC immediately
+            ... that seems to fix this one case
+            ... yup, we're at scanline 259 cycle 57 at the start of the "do this immediately" STA WSYNC instruction inside _vsync; there are 1D ticks left on the timer
 
 x. instead of drawing fat lines for each platform line, find the starting and ending scanlines of the visible portion of a platform and then
    interpolate between them
@@ -50,11 +174,11 @@ x. with the revised deltaz loop control (allowing deltaz=0 and deltaz = deltay),
            ... yup
 
 # supposedly, there are 5320 machine cycles total available during vblank and overscan
-10444 down from 10554 down from 10729
-10744 down from 10898 down from 11216
-5780 down from 5835 down from 5956
-9878 down from 10163 up from 9988
-6262 down from 7499 up from 6526
+9263 down from 10444 down from 10554 down from 10729
+9456 down from 10744 down from 10898 down from 11216
+5800 up from 5780 down from 5835 down from 5956
+8674 down from 9878 down from 10163 up from 9988
+5885 down from 6262 down from 7499 up from 6526
 
 x. we can't ever actually get on a platform; there's always a gap of sky/background below it
    ... for one, we do need to render one chunk of the platform that's behind the player if only so that we can gap fill to it; ugh, that's gunna be ugly
@@ -295,7 +419,6 @@ x. marksweep should only be done at the end of the frame if the thing has since 
        ... getting rid of mark sweep would free up that bit
            ... that bit could potentially be useful for marking up sprite data
 
-old comments:
 ; after finding the first platform, seeking, and one divide, INTIM reads #$23 (35).  starts at #$2B (43).
 ; update: after doing the first platform's first line with the z/y atan table, INTIM reads #$27.  better.
 ; 76 cycles per line, 37 vblank lines, for a meager 2812 cycles
@@ -343,6 +466,10 @@ there are viewsize lines (currently 101)
 
 ................
 
+... can we read the value back from TIM64 to figure out where we're at instead of storing data in 'caller'?
+    ... can read the current value back, but it counts down
+        ... I think.  stella's debug view suggests otherwise. XXX revisit this if we want to try to save a byte.
+
 o. 3D glasses support; use alternating sets of pf*lookup tables for left and right eyes
 
 o. the plotonscreen rule where it skips drawing if the new line is in the same position as lastline isn't great when deltay = 0
@@ -374,24 +501,6 @@ o. replace this code for disabling sprites with something that shows a sprite or
         lda #%00001110
         sta COLUPF
     ... should be easy to decide whether to hide/show a scanline of player data; compare the Z position of the player to the width (distance) of the platform piece
-
-o. re-working the vblank logic, I broke joystick button latching (which is part of the vblank enable register)
-   ... need to re-read how this is supposed to work
-   ... okay, writing a 1 to D6 of VBLANK enables latching; once enabled (or reset by turning off then on), INPT4 and 5 are high but go low and stay low on fire
-
-o. physics is kinda fucked; revisit
-   ... playeryspeed is not handled comprehensively
-   ... handle as 2s compliment
-   ... check carry/zero in gamelogic to enforce floor/ceiling
-
-o. bcs gamelogic2      ; don't write back to playerz if this addition would take it above $ff XXXX actually, wouldn't this be the win condition for the level?
-
-o. beq gamelogic4      ; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
-
-o. the TIM32 timings are quite probably off by one or so
-   ... vblank, vsync early/late, etc
-
-o. our imaginary dude should have some height; rather than a platform at the same height as us being shown at eye level, it should be offset downwards
 
 o. _plathypot could probably be optimized
 
@@ -426,8 +535,6 @@ o. shade platforms darker when they're further away
        ... such as round things
        ... yup, bitmaps for the platforms
 
-o. need to cap the player's Y 
-
 o. maybe make the ground greenish rather than brownish
    ... or maybe we're above water
 
@@ -457,46 +564,135 @@ o. make the top 1/3rd and bottom 1/3rd of the screen have 2 scan line resolution
 o. really need to lock it down to an odd number of scanlines; otherwise, we can't +/- any number in arctangent without walking one off the end when adding
    ... currently at an odd number
 
-o. according to stella, we're on scanline 15 already by the time we start rendering the screen
-
-o. steal physics from flapping.20050207.asm?
-
-o. land on platforms, bounce off of platforms when going up.
-   ... the flap and gravity routines need to look through the list of platforms (ugh)
-   ... no, we just need to remember the position of the platform we're above/below
-   ... for the sake of rendering things, deltaz and deltay are relative to our eyes; our feet are probably lower down
-   ... deltay > 0 means the platform is above us
-       ... it's playery - platformy; if positive, the platform is below us
-   ... while rendering, set bits when different conditions come up
-       ... deltaz = 1 and deltay = -1 means we've run face first into a platform, maybe
-       ... deltaz = 0 and deltay = 1 means we're standing on something
-
-o. gap filling won't fill to exactly the bottom line
-        lda lastline            ; make sure that there is a lastline and don't try to fill gaps if not
-        beq .plotonscreen8      ; skip gap filling if there is no lastline
-   ... okay, fixed that by stuff $ff in instead, but the first line is glitchy now
-
 ROM bytes used up to  $fa0e ... that's almost 2/3rds full
+ROM bytes used up to  $fb0e ... after collision detection, flapping, joystick control
+0xffff - 0xfb0e is 1265, or just over 1k left of our 4k.
 
-o. monitor ranoutoftime (break ranoutoftime) to make sure we're allowing enough time for plotonscreen to run
-    ... turning off gap filling isn't an entirely bad effect
-    ... scanlines.txt has scanline counting methods
+XXX maybe move shading to render time, and alternate between two colors for each line of platform?
+    XXX this would make the display kernel faster but require more bits in RAM for color
 
-o. rather than trying to leave and re-enter, do VSYNC/VBLANK diddling inline in plotonscreen
-    ... use a byte to keep track of where we are in the vblank process
-    ... when the timer hits 0 exactly, WSYNC and update registers
-    ... make this timer check a macro and use it from enough places that the timer never expires
-    ... okay, checking every 64 cycles would be too much overhead.  we're better off checking less often and then burning some time.
+o. references to level0 in code might get changed to indirect through a zero page pointer; eg
+        lda level0,y            ; load the first byte, the Z start position, of the current platform
+to:     lda (level0),y
+    ... if we want moving platforms.
+    ... future game?
 
-$cpu->write_8( $symbols->platnextline0a+1, 16 ); directly determines whether shit gets fucked up or not.  huh.  how!?
-    ... aha.  needs *21* on the clock to always be safe.  otherwise, there may or may not be enough time left.
-    ... my guess is that it goes negative and beyond and the ranoutoftime check doesn't work properly so it keeps trying to do more lines
-        ... output curplat, deltaz, lastline
-        ... yup, correct.  it continues on from deltaz=2 to deltaz=1
-    XXX okay, we need to make timer expiring logic more intelligent, one way or another
-        ... if there's a lastline, make sure that abs(curline-lastline) > INTIM before we continue
-do at 779 a version of what we do at 787
-        ... or else invert control like we were thinking of before
+o. some platform colors bounce, some teleport...?  or are we just doing Joust?
+    o. could be implemented with collisions_platform
+
+o. computer players
+    o. x,y,xspeed,yspeed,dead_respaw_time
+    o. decision to flap based on whether they're eye level with a platform that's near, and based on whether they're eye level with the player who is near
+    o. collision detection with player
+
+collision_bits and collision_platform are redundant with the new plan of reseting the joystick button latch and and zero'ing momentum, but they're handy for the unit tests
+
+XXX playerz A4 and playery 0 (and other values) shows render artifacts
+
+XXX need to rate limit flapping with some kind of a timer or something
+
+XXX readstick1, readstick2, readstick3 are exactly the same except for a constant value they use.  should table-ize the flap_z values and index it by joystick bits.
+
+XXX _collisions needs to detect collisions with enemies as well
+    ... okay, it does, but it doesn't do anything with this knowledge.
 
 
+XXX there are visual artifacts (garbage pf data) when we're far away from the platforms.  wrote 10_...pl to test for this.
 
+XXX bcs gamelogic2      ; don't write back to playerz if this addition would take it above $ff XXXX actually, wouldn't this be the win condition for the level?
+XXX beq gamelogic4      ; don't write back to playery if this subtraction would take it to zero; XXX actually, wouldn't this be the death condition?
+
+
+num0 could be eliminated
+
+arctan needs to be callable as a subroutine
+   not *too* long; could re-use the macro
+   computedreturn/returntable/return0, return1, return2 is the alternative
+       we have this caller variable that's used in the _vsync macro; it could be re-used, but collision_platform and collision_bits would get clobbered
+       v/ can we do without collision_bits and collision_platform?  do we actually use those in logic anywhere?  if only in tests, then it's okay if a faked RTS clobbers them
+       v/ shit.  _readstick in readstick8 needs to know if we're on a platform.
+           v/ I guess a hackish work-around would be to assume that if ymomentum was zero, we're standing on a platform.
+
+XXX draw enemies on the screen
+    XXX _arctan takes deltaz and deltay and returns a scan line number; need to call this as a subroutine of sorts to figure out which scanline to draw the enemy on
+    XXX _plotonscreen needs to be callable as a subroutine or else I need a smaller simplified inline version that doesn't do lastline gap filling
+
+XXX unit test enemy momentum and collisions?
+
+_drawenemies inline _arctan again custom _plotonscreen
+        and #%00011111          ; mask off the color part and any other data
+   
+in the low five bits of stuff in view[], 0..19 is valid, but those five bits can hold 0..31.
+are there some indexes that just never get used?  (0 is not drawn, 19 is full width)
+# 0: 1737204
+# 1:
+# 2:
+# 3: 371
+# 4: 1870
+# 5: 3579
+# 6: 2221
+# 7: 1245
+# 8: 2050
+# 9: 720
+# 10: 1861
+# 11: 703
+# 12: 742
+# 13: 684
+# 14: 847
+# 15:
+# 16: 738
+# 17: 956
+# 18:
+# 19: 24689
+... maybe use some of those as codes to turn sprite rendering on/off?
+... if the color bits == 0b000, then branch to update the sprite pointers (indirect loading sprite data through tmp1, tmp2)
+
+
+ldy scanline   ; 3
+dec scanline   ; 5
+bne            ; 3
+
+ldy scanline   ; 3
+dey            ; 2
+bne            ; 3
+sty            ; 3 ... 11 cycles either way
+
+... maybe use the top 3 bits instead
+    ... but those get initialized to 0 right now so all of the blank lines will set this logic off
+    ... but that's easily fixed
+
+enemy really only has two three operations:
+    1. start rendering a new player with a given width
+    2. stop rendering the player
+
+XXX need a buffer with the player pattern data plus about a hundred lines of 0s ... enemy
+
+_drawenemies was stubbed out
+
+stretch the bird out and then draw four points of him when we render (including the off position at the bottom)
+
+        lda #<enemybird         ; low byte first XXX need to actually start past the graphics data so we default to not drawing the bird until instructed to do so
+
+playerdata, which initially points to enemybird, is indexed by scanline (in Y), which counts down to zero.  so stuff gets drawn upside down:
+        lda (playerdata),y  ; +5   41
+... not only does it get upsidedown, but we can't reset it to 0!
+
+this version is too slow to run as part of 'platforms':
+        ldy spritepointer   ; +3   36
+        lda enemybird,y     ; +4   40
+        sta GRP0            ; +3   43
+        inc spritepointer   ; +5   48   ... 15 cycles
+... the logic can be moved to 'enemy', or else go back to doing this:
+		lda (playerdata),y	; +5  (with scanline loaded into Y, which happens anyway)
+		sta GRP0			; +3        ... 8 cycles
+... but that would mean doing math to figure out what playerdata(lo) should be when we're trying to set it.  to zero it, we'd have to set it to scanline eor $ff
+... moving sprite pattern updating logic to 'enemy' probably makes the most sense.  it can fetch one of 8 different pieces of pattern and update it, and it'll stretch automatically until updated again.
+
+can't move directly from one memory location to another; have to do a load then a store.
+
+XXX fps is wrong now; the thing is running too fast so there's more wrong than just having changed beq to bmi/bpl to draw the 0 scanline
+59.55fps
+renderdone happens on line 145
+scoredone happens on line 154 ... that leaves 38 bonus lines plus 30 lines from overscan before vsync then 37 lines of vblank
+
+XXX
