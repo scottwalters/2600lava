@@ -200,6 +200,8 @@ run_cpu( $symbols->collisions9a );
 
 is $cpu->read_8( $symbols->collision_platform ), 4, 'collision logic decided that we are standing on the second platform which has index 4';
 
+diag "playeryspeed = ", $cpu->read_8( $symbols->playeryspeed );
+
 # resume execution...
 
 run_cpu( $symbols->momentum4 );
