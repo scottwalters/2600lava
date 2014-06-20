@@ -233,6 +233,8 @@ $cpu->write_8( $symbols->playerzspeed, 0 );
 $cpu->write_8( $symbols->playerylo, 0x71 );
 $cpu->write_8( $symbols->playeryspeed, 0x70 ); # adding these together should carry, but if/when 0x70 gets negated, 0x71 will be larger than it so we won't immediately go down
 
+$cpu->set_x( 0 ); # collisions uses X to index which movable object it is currently working with
+
 $cpu->set_pc( $symbols->collisions );
 # $debug = 1;
 run_cpu( $symbols->collisions9a );
@@ -266,6 +268,8 @@ $cpu->write_8( $symbols->playerzspeed, 0x70 );  # adding those together should c
 
 $cpu->write_8( $symbols->playerylo, 0x00 );
 $cpu->write_8( $symbols->playeryspeed, 0x00 );
+
+$cpu->set_x( 0 ); # collisions uses X to index which movable object it is currently working with
 
 $cpu->set_pc( $symbols->collisions );
 run_cpu( $symbols->collisions9a );
@@ -329,14 +333,14 @@ $cpu->set_pc( $symbols->momentum4 );
 $cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
-# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
 is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity - 1;  # since the test is less-than, gravity gets applied one extra time to bring us to falling just faster than terminal velocity.
 
 $cpu->set_pc( $symbols->momentum4 );
 $cpu->set_x( 0 );
 run_cpu( $symbols->momentum9 );
 
-# diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
+diag sprintf "after gravity, playeryspeed: %x\n", $cpu->read_8( $symbols->playeryspeed);
 is $cpu->read_8( $symbols->playeryspeed ), $terminal_velocity - 1;  # ... but then we don't accelerate any faster than one more than terminal velocity (or one less than, since it is a negative number)
 
 

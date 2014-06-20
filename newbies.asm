@@ -8,6 +8,8 @@
         SEG.U RAM_VARIABLES
         ORG $80
 
+; position and velocity
+
 playerz		ds 1		; how far in to the maze
 monster1z	ds 1
 playery		ds 1		; how close to splatting
@@ -21,9 +23,9 @@ monster1yspeed	ds 1
 playerzspeed	ds 1  ; signed Z momentum
 monster1zspeed	ds 1
 
-; numeric output
+; frame counter
 
-num0    ds 1		; number to output, left XXX take this back
+tickcounter    ds 1
 
 ; various
 
@@ -44,13 +46,11 @@ caller		ds 1		; vblank/vsync progress; used for this during all of the routines 
 scanline = caller 	; display kernel counts this down to zero and uses it to index the frame buffer
 skyline	= curplat	; offset in to the sky color data depending on our height
 
-NUMG0	= tmp2		; pattern buffer temp -- number output (already uses tmp1)
-
 collision_bits = tmp1
 collision_platform = tmp2
 
-; playerdata	= tmp1	; pointer to player graphic data used during render kernel XXX not currently doing this and can take this out unless we start doing that again
-; playerdatahi = tmp2
+playerdata	= tmp1	; pointer to player graphic data used during render kernel
+playerdatahi = tmp2
 
 enemydata = curplat		; _drawenemies, how many lines of the enemy do we have left to draw?
 ; _drawenemies reuses lastline as the last line we're filling towards
@@ -155,6 +155,20 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 		; fall through to continue whereever we were invoked
 		ENDM
 
+;
+; _maybe_vsync
+;
+
+; check INTIM and do _vsync if it is 1 or 0
+; uses A
+
+		MAC _maybe_vsync
+		lda INTIM
+		bne _maybe_vsync9
+		_vsync
+_maybe_vsync9
+		ENDM
+
 
 ;
 ; apply momentum
@@ -184,7 +198,7 @@ momentum0
 		clc
 		adc playerzlo,x
 		sta playerzlo,x
-		bvc momentum2		; no overflow so we didn't go above 127; skip to dealing with Y speed
+		bvc momentum2		; overflow means we need to carry from our signed playerzlo into the unsigned playerz.  if no overflow so we didn't go above 127.  go on to dealing with Y speed.
 		clc
 		lda playerz,x
 		adc #01
@@ -200,7 +214,7 @@ momentum1
 		sbc tmp1
 		sta playerzlo,x
 		lda playerz,x
-		beq momentum1a		; but don't go below 0
+;		beq momentum1a		; but don't go below 0; XXX testing; actually, we do want enemies flying towards us to be able to warp off the end of the level
 		sbc #0				; if we barrowed above, this will effective decrement playerz by one
 		sta playerz,x
 momentum1a
@@ -408,133 +422,6 @@ readstick8b
 readstick9
 		ENDM
 
-;
-; collisions
-;
-
-; detect collisions
-
-; we handle collisions in-line in logic in here
-; generally, that means zero'ing out momentum, or maybe making them bounce
-; we also still set collision_platform and collision_bits but really just for unit testing at this point
-; we first loop over all of the movable objects that might collide with something (using X)
-; then we loop over all of the platforms it might collide with (using Y)
-
-		MAC _collisions
-collisions
-		ldx #num_bodies-1		; which movable object we're doing collisions for; do the monsters first and the player last so that the player's stuff is left to inspect for unit testing
-
-collisions0
-		; start examining a movable object
-		; reset collision registers
-		ldy #$ff
-		sty collision_platform	; which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
-		ldy #0
-		sty collision_bits				; collision bits; bit 0 means we can't go up; bit 1 means we can't go forward; bit 2 means we can't go down
-
-collisions1
-		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
-
-		lda level0,y			; load the first byte, the Z start position, of the current platform
-		beq collisions9			; stop when there's no more platform data; or rather, go on to a possible next movable object
-
-		; make sure we're >= the start of it and <= the end of it
-		lda playerz,x
-		cmp level0+0,y
-		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet; go see if we're walking in to it and other tests
-		lda level0+1,y
-		cmp playerz,x
-		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
-
-		; our Z position overlaps the platform
-		; are we standing on this platform?
-		lda playery,x
-		clc						; our head is one unit above our feet, I guess, so subtract one extra
-		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		bne collisions2			; branch to the next collision test if not exactly one unit above the platform height
-collisions1a					; label just here for the unit tests
-		; okay, we're standing on this platform!
-		sty collision_platform				; record which platform we're standing on
-		; if Y momentum is downward (negative), zero it
-		lda playeryspeed,x
-		bpl collisions1b
-		lda #0
-		sta playeryspeed,x
-collisions1b
-		jmp collisions8			; go on to the next platform; it's only possible to be running into, standing on, or hitting your head on any given platform so as soon as we find one of these cases, we know we can go on to the next platform
-
-collisions2
-		; okay, are we hitting our head?
-		lda level0+2,y
-		sec
-		sbc playery,x
-		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
-		cmp #1
-		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
-		jmp collisions3			; not exactly so we're not hitting our head; go to the next collision test
-collisions2a
-		; we're hitting our head on this platform
-		lda collision_bits
-		ora #%00000001
-		sta collision_bits
-		; if Y momentum is upwards (positive), negate it
-		lda playeryspeed,x
-		bmi collisions2b
-		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
-		sta playeryspeed,x		; and now we're going down!
-collisions2b
-		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
-
-collisions3
-		; start of tests where we aren't >= the start and <= the end of the platform
-		; are we walking in to this platform?
-		lda level0,y
-		clc
-		sbc playerz,x
-		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
-		lda level0+2,y
-		cmp playery,x
-		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
-collisions3a
-		; we're walking in to this platform
-		lda collision_bits
-		ora #%00000010
-		sta collision_bits
-		; if Z momentum is forward (positive), negate it
-		lda playerzspeed,x
-		bmi collisions3b
-		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
-		sta playerzspeed,x		; and now we're going backwards!
-collisions3b
-		jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
-
-collisions4
-		; XXX test to see if we're colliding with an enemy bird
-		jmp collisions8
-
-collisions7
-		; control is sent here when we've run in to something (but not when we've landed on something)
-		cpx #0
-		bne collisions7a		; don't reset the joystick button latch when monsters collide with things, only when the player does
-		_cleartrigger			; reset the joystick button latch to keep the player from flapping
-collisions7a
-		; fall through to collisions8
-
-collisions8
-		; try another platform?
-		iny
-		iny
-		iny
-		iny
-		jmp collisions1
-
-collisions9
-		dex						; if there's a next movable body to do collisions on, do it
-		bmi collisions9a		; branch to exit if X < 0
-		jmp collisions0			; else go back for another pass on the next movable body
-collisions9a
-		ENDM
-
 
 ;
 ; _arctan (formerly platlinedelta)
@@ -706,23 +593,22 @@ collisions9a
 		inc lastline			; pre-increment lastline so that we can do an equality comparision rather than a +/- 1 comparison
 
 .plot_down1
-		lda view,x				; get the line width of what's there already
-		and #%00011111			; mask off the color part and any other data
-		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
-		bpl .plot_down2			; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
+		lda view,x				; +4  9 ... get the line width of what's there already
+		and #%00011111			; +2 11 ... mask off the color part and any other data
+		cmp perspectivetable,y	; +4 15 ... compare to the fatness of line we wanted to draw
+		bpl .plot_down2			; +2 17 ... what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
 
-		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
-		ora tmp2				; add the platform color
-		sta view,x				; draw to the framebuffer
+		lda perspectivetable,y	; +4 21 ... perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
+		ora tmp2				; +3 24 ... add the platform color
+		sta view,x				; +4 28 ... draw to the framebuffer
 
 .plot_down2
-		cpx lastline			; we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  this routine updates lastline anyway.
-		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
+		cpx lastline			; +3 31 ... we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  this routine updates lastline anyway.
+		beq .plot8				; +2 33 ... if lastline minus curline is exactly 1 away then our work is done; bail out (well below 64 cycles at this point)
 .plot_down2a
-		dex						; drawing downwards relative last plot
-		; jmp .plot_down1			; always branch; recurse back in
-		lda	INTIM
-		bne .plot_down1
+		dex						; +2 35 ... drawing downwards relative last plot
+		lda	INTIM				; +2  2 ... worst case scenario, we read this as a '1' one cycle before it flips over to 0; in that case, we need to read it again within 64 cycles
+		bne .plot_down1			; +3  5
 		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
 		bne .plot_down1			; loop always
 
@@ -967,8 +853,10 @@ reset1
 
 
 startofframe
-
+		;  ... stella considers this to be the first scanline.  we don't draw anything, yet.
 		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
+
+		inc tickcounter
 
 		lda #%01000000			; turn VBLANK off near the end of line 37, leaving the joystick latch on
 		sta VBLANK				; ideally, this would be done near the end of the scanline
@@ -988,23 +876,16 @@ startofframe0
 		bne startofframe0
 
 		; use tmp1, tmp2 as a pointer to sprite data
+		; XXX was using this approach and I'm tempted to go back to it; it would simplify things a lot, even if clipping wouldn't be right; testing add some bird draw commands to the frame buffer
 ; XXX not currently doing this; currently subscripting enemybird directly
 ;		lda #<enemybird			; low byte first XXX need to actually start past the graphics data so we default to not drawing the bird until instructed to do so
 ;		sta playerdata
 ;		lda #>enemybird			; 
 ;		sta playerdata+1
 
-		; XXX was using this approach and I'm tempted to go back to it; it would simplify things a lot, even if clipping wouldn't be right; testing add some bird draw commands to the frame buffer
-		; lda #%11100101
-		; sta view+50				; remember this goes backwards, so that's 50 from the bottom
-		; lda #%11110101
-		; sta view+46
-		; lda #%11100001
-		; sta view+42
-
 		; wait for sync, then do some setup in the 30 cycles we have before we have to be at the start of 'renderpump'
 
-		sta WSYNC				;      0 ... stella considers this to be the first scanline.  we don't draw anything, just get things ready to draw on the next one.
+		sta WSYNC				;      0
 scanline1
 		lda #%00000001			; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
 		sta CTRLPF				; +3   5
@@ -1045,11 +926,17 @@ enemy
 		lda nusize,x			; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
 		sta NUSIZ0				; +3  60
 
+; sketching out some logic to animate the bird; would be quicker to set up a pointer beforehand and then do lda (tmp1),y
+;		lda tickcounter			; +3
+;		and #%00001000			; +2
+;		sta tmp1				; +3
+
 		; update player graphics data
 		tya						; +2  62
 		and #%00011100			; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
 		lsr						; +2  66 ... XXX this could be skipped
 		lsr						; +2  68 ... XXX this could be skipped
+;		ora tmp1				; +3
 		tay						; +2  70
 		lda enemybird1,y		; +4  74
 		sta GRP0				; +3 ->1 (went up to 77 which rolls over 76 to 1; we head into hblank here and start a new scanline)
@@ -1147,7 +1034,52 @@ renderdone
 		lda #0					; phase 0 in the vblank process
 		sta caller
 
-		_collisions
+		; do collisions on movable body 0, the player
+		ldx #0
+		jmp collisions
+collisionsreturn0				; it branches back here after doing collisions with X=0
+		lda #%00000011
+		and collision_bits
+		beq no_player_collisions
+		_cleartrigger
+no_player_collisions
+
+		; do collisions on monsters
+		; depending on that, consider flapping
+		ldx #1					; XXX should loop over 1..num_bodies
+		jmp collisions
+collisionsreturn1				; it branches back here after doing collisions with X>0
+		lda #%00000011
+		and collision_bits
+		bne monster_collisions	; opposite sense of above; we branch if we did collide with something
+		; no collision; if tick_counter is an even modulo of some number and this monster is lower than the player, then flap
+		lda tickcounter			; rate limit monster flapping
+		; and #%00001111			; monster can only flap once every 16 frames
+		; and #%00000011			; monster can only flap once every 4 frames, which is 15 times per second, which is a lot
+		and #%00000111			; monster can only flap once every 8 frames, which is 7.5 times per second
+		bne monster_collisions	; branch if all four or so low bites of tick_counter aren't zero
+		lda playery,x
+		cmp playery
+		bpl monster_collisions
+		; make the enemy bird flap
+		lda playeryspeed,x
+		clc
+		; adc #flap_y             ; $10 would take 16 frames to send us up one whole unit; current at 6
+		adc #10					; XXXX testing... 10 gets them up off the ground pretty well
+		bvs monsterflap1		; don't write it back if it would overflow
+		sta playeryspeed,x
+monsterflap1
+		lda playerzspeed,x
+		; clc					; XXX they can fly forward or backwards perhaps depending on stuff
+		; adc #flap_z2			; z3 is slowest; z1 fastest; z2 middle
+		sec
+		; sbc #flap_z2
+		sbc #10					; XXX testing
+		bvs monsterflap2		; don't write it back if it would overflow our signed playeryspeed
+		sta playerzspeed,x
+monsterflap2
+monster_collisions
+
 		_readstick
 		_momentum
 		; XXX _ai
@@ -1254,6 +1186,12 @@ platrenderline1
 		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
 		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
+		lda INTIM				; experimental; still have some roll, and the cycle count for gap feeling seems really good, and the timer is handled immediately after _plotonscreen; okay, this seems to have maybe fixed it; but maybe putting more on the post-plot timer would be a better fix?
+		bne preplottimer
+		_vsync
+preplottimer
+
+
 		_plotonscreen			; Y gets the distance away/platform line width, X gets the scanline to draw at
 
 platnextline
@@ -1303,7 +1241,7 @@ platnextline2
 
 ;
 ;
-; small subroutines
+; subroutines
 ;
 ;
 
@@ -1321,6 +1259,144 @@ vblanktimerendalmost
 		bne burntime
 		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
 		bne burntime			; branch always
+
+
+;
+; collisions
+;
+
+; detect collisions
+
+; takes X of which movable body to do collisions on, which also tells us where to return to
+; we handle collisions in-line in logic in here XXX change that
+; generally, that means zero'ing out momentum, or maybe making them bounce
+; we also still set collision_platform and collision_bits but really just for unit testing at this point
+; we first loop over all of the movable objects that might collide with something (using X)
+; then we loop over all of the platforms it might collide with (using Y)
+
+collisions
+		; X is now passed by our caller
+		; ldx #num_bodies-1		; which movable object we're doing collisions for; do the monsters first and the player last so that the player's stuff is left to inspect for unit testing
+
+collisions0
+		; start examining a movable object
+		; reset collision registers
+		ldy #$ff
+		sty collision_platform	; which, if any, platform we're standing on; maybe platforms do something magical when we're standing on them so we want to know which one it is
+		ldy #0
+		sty collision_bits				; collision bits; bit 0 means we can't go up; bit 1 means we can't go forward; bit 2 means we can't go down
+
+collisions1
+		; load platform info, bail if we've run out of platforms, and test to see if we're standing on this platform
+
+		lda level0,y			; load the first byte, the Z start position, of the current platform
+		beq collisions9			; stop when there's no more platform data; or rather, go on to a possible next movable object
+
+		; make sure we're >= the start of it and <= the end of it
+		lda playerz,x
+		cmp level0+0,y
+		bmi collisions3			; if playerz - platstart < 0, the platform hasn't started yet; go see if we're walking in to it and other tests
+		lda level0+1,y
+		cmp playerz,x
+		bmi	collisions3			; if platend - playerz < 0, we're off the end of the platform
+
+		; our Z position overlaps the platform
+		; are we standing on this platform?
+		lda playery,x
+		clc						; our head is one unit above our feet, I guess, so subtract one extra
+		sbc level0+2,y			; subtract the 3rd byte, the platform height
+		bne collisions2			; branch to the next collision test if not exactly one unit above the platform height
+collisions1a					; label just here for the unit tests
+		; okay, we're standing on this platform!
+		sty collision_platform				; record which platform we're standing on
+		; if Y momentum is downward (negative), zero it
+		lda playeryspeed,x
+		bpl collisions1b
+		lda #0
+		sta playeryspeed,x
+collisions1b
+		jmp collisions8			; go on to the next platform; it's only possible to be running into, standing on, or hitting your head on any given platform so as soon as we find one of these cases, we know we can go on to the next platform
+
+collisions2
+		; okay, are we hitting our head?
+		lda level0+2,y
+		sec
+		sbc playery,x
+		beq collisions2a		; branch if our head is exactly at the platform level.  bump.
+		cmp #1
+		beq collisions2a		; branch if platform is exactly one above head level; we're hitting our head
+		jmp collisions3			; not exactly so we're not hitting our head; go to the next collision test
+collisions2a
+		; we're hitting our head on this platform
+		lda collision_bits
+		ora #%00000001
+		sta collision_bits
+		; if Y momentum is upwards (positive), negate it
+		lda playeryspeed,x
+		bmi collisions2b
+		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
+		sta playeryspeed,x		; and now we're going down!
+collisions2b
+		; jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
+		jmp collisions8
+
+collisions3
+		; start of tests where we aren't >= the start and <= the end of the platform
+		; are we walking in to this platform?
+		lda level0,y
+		clc
+		sbc playerz,x
+		bne collisions4			; if we're not exactly one unit in front of the platform, branch forward and try the next thing
+		lda level0+2,y
+		cmp playery,x
+		bne collisions4			; if we're not at exactly the same height, branch forward and try the next thing
+collisions3a
+		; we're walking in to this platform
+		lda collision_bits
+		ora #%00000010
+		sta collision_bits
+		; if Z momentum is forward (positive), negate it
+		lda playerzspeed,x
+		bmi collisions3b
+		eor #$ff				; half assed negation; we'd have to add 1 to be exact, but precision shouldn't matter here
+		sta playerzspeed,x		; and now we're going backwards!
+collisions3b
+		; jmp collisions7			; jump to reset the joystick button latch to keep the player from flapping and then go on to the next platform
+		jmp collisions8
+
+collisions4
+		; XXX test to see if we're colliding with an enemy bird
+		jmp collisions8
+
+; collisions7
+; 		; control is sent here when we've run in to something (but not when we've landed on something)
+; 		cpx #0
+; 		bne collisions7a		; don't reset the joystick button latch when monsters collide with things, only when the player does
+; 		_cleartrigger			; reset the joystick button latch to keep the player from flapping
+; collisions7a
+; 		; fall through to collisions8
+
+collisions8
+		; try another platform?
+		iny
+		iny
+		iny
+		iny
+		jmp collisions1
+
+; don't loop any more; just return
+collisions9
+;		dex						; if there's a next movable body to do collisions on, do it
+;		bmi collisions9a		; branch to exit if X < 0
+;		jmp collisions0			; else go back for another pass on the next movable body
+collisions9a
+		cpx #0
+		bne collisions9b
+		jmp collisionsreturn0	; return player logic handling
+collisions9b
+		jmp collisionsreturn1	; return to monster logic handling; X is still set so the caller knows which monster the results are for
+
+
 
 ;
 ; computedreturn
@@ -1806,11 +1882,12 @@ level0
         ; platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers, and %000 is reserved)
         ; eg, this first one starts at 1, is 10 long, is 30 high, and is green
 		; the color $e0 (aka $f0) is forbidden here; %11100000 indicates sprite data rather than platform data for that line
-		dc.b 1, 11, $1e,  $a0
-		dc.b 20, 25, $14, $60
-		dc.b 30, 40, $18, $20
+		dc.b 1, 11, $1e,  $a0	; blue
+		dc.b 20, 25, $14, $60	; purple
+		dc.b 30, 40, $18, $c0	; green
+		dc.b 35, 50, $24, $40	; red
+		dc.b 40, 60, $10, $60	; purple again ... XXX and this makes the screen jump... too much gap filling I think
 		dc.b 0, 0, 0, 0 		;       end
-		dc.b 0, 0, 0, 0 		;       end XXX voodoo
 
 ;
 ;
