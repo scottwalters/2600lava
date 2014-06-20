@@ -34,7 +34,7 @@ sub run_cpu {
     });
 }
 
-my $viewsize = 0xff - $symbols->view; 
+my $viewsize = $symbols->viewsize;
 my $half_way_down_screen = int( $viewsize / 2 );
 
 # this is based on the perl embedded in newbies.asm for generating the 'arctangent' table
