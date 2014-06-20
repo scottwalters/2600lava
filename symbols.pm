@@ -6,6 +6,9 @@ use 5.18.0;
 use strict;
 use warnings;
 
+use Carp;
+$SIG{__DIE__} = sub { Carp::confess @_ };
+
 # figure out what address a symbol resolves to; hackish
 
 #0123456789012\t  \t  \t  \t0123
@@ -76,6 +79,32 @@ sub symbols {
             return $locations{$loc-3} if $locations{$loc-3};
             return 'unknown location';
         }
+
+        sub run_cpu {
+            # XXX possible name conflict with the assembly
+            # note that the callback is invoked after Acme::6502 has executed that instruction.
+            # this means that if 'test' is a stop symbol, we stop after executing the instruction after the 'test' label.
+            my $symbols = shift;
+            my %args = @_;
+            my $cpu = delete $args{cpu};
+            my $debug = delete $args{debug};
+            my @stop_symbols = @{ $args{stop} };
+            @stop_symbols = map { $symbols->{$_} || die "unknown symbol ``$_''" } @stop_symbols;
+            my $pc;
+            $cpu->run(10000, sub {
+                $pc = shift;
+                my ($inst, $a, $x, $y, $s, $p) = @_;
+                my $name = $symbols->name_that_location($pc);
+                Test::More::diag sprintf "a = %s x = %s y = %x", $a, $x, $y if $debug;
+                Test::More::diag $name . ':' if $name !~ m/unknown/ and $debug;
+                Test::More::diag $symbols->source->[ $pc ] if $debug;
+                if( grep $pc == $_, @stop_symbols ) {
+                    ${ PadWalker::peek_my(1)->{'$ic'} } = 0;
+                }
+            });
+            return $pc;
+        }
+
 
         return bless \%symbols;
     }
