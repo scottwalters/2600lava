@@ -1,6 +1,56 @@
 breakif {_scan>#262}
 break ranoutoftime
 
+ldy scanline   ; 3
+dec scanline   ; 5
+bne            ; 3
+; vs:
+ldy scanline   ; 3
+dey            ; 2
+bne            ; 3
+sty            ; 3 ... 11 cycles either way
+
+... random enemy locations or at least random flapping
+    ... then semi-random flapping with respect to players height
+    ... okay, turns out randoms are hard.  can keep my own polycounter in RAM and perhaps even feed it with POT input noise.  but it looks like non-random is easier than random.
+
+... maybe too much gap filling, but stuff rolls
+    ... gap filling itself looks really solid
+    ... maybe before/after?  before should be caught by the INTIM cmp to 6
+    ... adding another INTIM=0 test with a _vsync before jumping in to _plotonscreen seems to help
+
+... what happends exactly when we fly off the edge of the world?
+    ... it works perfectly!  we can actually see the start of the world again before we cross the boundary.
+
+... collision detection resets the joystick button latch when the player collides but there's no similar anti-flap mechanism for monsters
+    ... maybe set a bit in tickcounter?
+        ... can't flap if an odd number
+    ... or make collisions() a sort of a subroutine that takes an X parameter and is capable of returning to one of two places
+        ... for return pointer, caller is occupied with _vsync
+        ... or just use X!
+    ... stop handling collisions in-line but instead handle them by the caller
+        ... collisionsreturn0, 1
+        ... okay, continue to handle momentum cancelling/bounce in-line
+collision_bits collision_platform ($ff if none)
+collisions7 does _cleartrigger ... 00000010 00000001 
+
+... enemies should probably not hang down below platforms they're standing on; only draw them upwards from their exact spot
+    ... might be fixed now
+... enemy falls through the platform rather than coming to rest on it
+    ... seems to work when the thing is first started, but dicking around with his position, this happened
+
+... why can't I see the enemy fall from the sky?
+    ... oh, now he rises from the floor
+    ... but come to think of it, in real Joust, enemies did generate out of the floor
+
+fps is wrong now; the thing is running too fast so there's more wrong than just having changed beq to bmi/bpl to draw the 0 scanline
+59.55fps
+renderdone happens on line 145 (previously was scanline 144... makes sense)
+scoredone happens on line 154 ... that leaves 38 bonus lines plus 30 lines from overscan before vsync then 37 lines of vblank (previously was 152)
+7.vsync1 262 (previously 260)
+8.vsync0 37 (same)
+... changed 127->125 for TIM64T at scoredone and that fixed it.  not sure why the fps was so far off.
+
 v/ _readstick needs to allow running along platform surfaces
 
 v/ _momentum loops over all of the movable objects (currently two)
@@ -648,51 +698,120 @@ are there some indexes that just never get used?  (0 is not drawn, 19 is full wi
 ... if the color bits == 0b000, then branch to update the sprite pointers (indirect loading sprite data through tmp1, tmp2)
 
 
-ldy scanline   ; 3
-dec scanline   ; 5
-bne            ; 3
-
-ldy scanline   ; 3
-dey            ; 2
-bne            ; 3
-sty            ; 3 ... 11 cycles either way
-
-... maybe use the top 3 bits instead
-    ... but those get initialized to 0 right now so all of the blank lines will set this logic off
-    ... but that's easily fixed
-
 enemy really only has two three operations:
     1. start rendering a new player with a given width
     2. stop rendering the player
 
-XXX need a buffer with the player pattern data plus about a hundred lines of 0s ... enemy
-
-_drawenemies was stubbed out
-
-stretch the bird out and then draw four points of him when we render (including the off position at the bottom)
-
-        lda #<enemybird         ; low byte first XXX need to actually start past the graphics data so we default to not drawing the bird until instructed to do so
+v/ a buffer with the player pattern data plus about a hundred lines of 0s ... enemy
+   ... with the revised plan which doesn't automatically update the pattern buffer from memory each line, 
 
 playerdata, which initially points to enemybird, is indexed by scanline (in Y), which counts down to zero.  so stuff gets drawn upside down:
         lda (playerdata),y  ; +5   41
 ... not only does it get upsidedown, but we can't reset it to 0!
-
-this version is too slow to run as part of 'platforms':
+    ... well, we can, but it would involved computing the negative and storing that in playerdata's lo.
+    ... that could totally be done 'enemy'
+this corrected version is too slow to run as part of 'platforms':
         ldy spritepointer   ; +3   36
         lda enemybird,y     ; +4   40
         sta GRP0            ; +3   43
         inc spritepointer   ; +5   48   ... 15 cycles
-... the logic can be moved to 'enemy', or else go back to doing this:
+... or that logic can be moved to 'enemy', which has implications in that data doesn't update unless the line contains an update command
 		lda (playerdata),y	; +5  (with scanline loaded into Y, which happens anyway)
 		sta GRP0			; +3        ... 8 cycles
 ... but that would mean doing math to figure out what playerdata(lo) should be when we're trying to set it.  to zero it, we'd have to set it to scanline eor $ff
 ... moving sprite pattern updating logic to 'enemy' probably makes the most sense.  it can fetch one of 8 different pieces of pattern and update it, and it'll stretch automatically until updated again.
+... the sprites are going to be ugly.  most are only going to get a few updates.  they're not going to be recognizable.  but we can run for this until/unless we want to try to change it again.
 
-can't move directly from one memory location to another; have to do a load then a store.
+stretch the bird out and then draw four points of him when we render (including the off position at the bottom)
 
-XXX fps is wrong now; the thing is running too fast so there's more wrong than just having changed beq to bmi/bpl to draw the 0 scanline
-59.55fps
-renderdone happens on line 145
-scoredone happens on line 154 ... that leaves 38 bonus lines plus 30 lines from overscan before vsync then 37 lines of vblank
+_drawenemies was stubbed out
 
-XXX
+
+        ldx #0              ; iterate over the objects to apply momentum to
+momentum0
+...
+momentum9
+        inx
+        cpx #num_bodies
+        bcs momentum9a          ; branch to exit if Y >= num_bodies
+        jmp momentum0           ; else go back for another pass on the next movable body
+momentum9a
+        ENDM
+
+
+delay ending VBLANK till as far near the end of scanline 37 as we go before doing a VSYNC
+add 'enemy' excursion to the 'platforms' render kernel; execution is sent there from 'renderpump' when the foreground color comes back as 0.  that updates the sprite pattern buffer and width.
+
+XXX sprite width and position (both related) should be established at the top of the frame.
+
+don't write enemies into view[] at all.
+instead, just compute high byte (which strite strip to use) and low byte (position on screen) and go back to what we were doing.
+set sprite width for player0, player1 right after we do the _arctan.
+
+XXX three different sprite strips depending on whether we're looking at the bird from head on, above, or below
+
+
+; table of useful NUSIZ0 values; translates two bits to three bits; the %11 index is unused
+nusize
+        .byte %00000000, %00000101, %00000111 
+
+        and #%00000011          ; +2  51 ... the bottom two bits cointain the sprite width; 000, 101, 111 are the only reasonable values to plug in to NUSIZ0
+        tax                     ; +2  53 ... XXX with a large-ish table with a lot of redundancy in it, we could avoid having to back up A in Y, mask part off, then reload it from Y again
+        lda nusize,x            ; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
+        sta NUSIZ0              ; +3  60
+              ^--------- XXXXXXXXX do this right where do we _arctan
+
+        ; if deltay > deltaz, this bit of the platform isn't visible
+        lda deltay
+        _absolute
+        cmp deltaz
+        bmi platrenderline1 ; its okay, continue on
+        beq platrenderline1 ; its okay
+
+lastline  (as itself)
+Y is the currentline
+tmp2 -- gap between lines
+enemydata -- offset into enemybird sprite data
+
+; Y gets the distance, which we use to figure out which size of line to draw
+        lda view,x              ; get the line width of what's there already
+        and #%00011111          ; mask off the color part and any other data
+        cmp perspectivetable,y  ; compare to the fatness of line we wanted to draw
+
+... sprite framebuffer data needs to be drawn after the platform data as it doesn't use the same bits to indicate distance
+    ... which is a bitch because the platform drawing code is carefully tuned to use up all remaining time
+    ... make it use the same bits so it can go first?
+        ... the 5 low bits are width in platform entries in the framebuffer; could move the two width bits to the top of those five bits and z-buffering might kind of work
+        ... that would need to be tuned, but that could be done
+            ... we already have an if/else thing to decide which number to use for this field based on the actual deltaz
+        ... smaller number for the lower five bits is closer; larger is further away; that's opposite of what we're doing right now with the sprite size bits, but that can be fixed
+    ... have the timer go off early so some time is left for drawing enemies?
+
+trapwrite 96 ... .drawenemies2 put $E3 in there, %11100011
+   ... then 9.plot_up2 replaces that with $B3.  bah.
+   ... shorting the timer is starting to look attractive.
+
+... when we're really close, both P0 and P1 using the same data mirrored could be drawn next to each, maybe; that would probably involve dealing with width before the start of the frame
+... alternate between enemybird1 / enemybird2 at some frequency
+
+... move more setup stuff to reset() to perhaps reclaim a scanline for processing.  setup stuff could be merged into 'scanline1'
+
+... maybe visit every scanline just in case we have to clip and shut off data... though this seems to be working pretty well as is
+
+... sprite hoovers a bit above the platform it's on
+    ... and the ground
+
+
+... really need a bird flying away from the player (same direction) and one flying towards him/her (opposite direction)
+    ... or else make the bird change directions and fly towards/away from us depending on whether we're above them
+
+
+playerdata
+playerdatahi <- enemybird1 or 2... XXX set this up near startofframe0
+
+... enemy isn't flapping worth a damn.  why is that?
+    ... why does it take me multiple flaps to get off of a platform?
+    ... working around this for now with large flap_y and flap_z values
+
+XXX set a more reasonable enemy color than purple
+
