@@ -36,7 +36,7 @@ curplat		ds 1		; which platform we are rendering or considering; used as an inde
 deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
 lastline	ds 1		; last line rendered to the screen for gap filling
-caller		ds 1		; vblank/vsync progress
+caller		ds 1		; vblank/vsync progress; used for this during all of the routines expect the display kernel
 
 ; aliases
 
@@ -51,6 +51,9 @@ collision_platform = tmp2
 
 ; playerdata	= tmp1	; pointer to player graphic data used during render kernel XXX not currently doing this and can take this out unless we start doing that again
 ; playerdatahi = tmp2
+
+enemydata = curplat		; _drawenemies, how many lines of the enemy do we have left to draw?
+; _drawenemies reuses lastline as the last line we're filling towards
 
 ; framebuffer
 
@@ -144,7 +147,7 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
 		sta VBLANK
 
-		lda #44					; 36*76/64 = 42.75, plus one for the WSYNC at the end ; these fractions are scary; 64*0.25 gives us 16 cycles to do this bullshit in before the WSYNC is maybe late; adjusting this to 44 instead based on experimenting with stella
+		lda #40					; adjusting this based on experimenting with stella
 		sta TIM64T
 
 		inc caller				; run .vsync0 next time
@@ -170,9 +173,8 @@ momentum
 		; skip applying momentum to the player if the select switch is being held; debug mode
 		lda SWCHB
 		and #%00000010		; select switch
-		bne momentum0a		; branch over jmp to end if select switch is not being held
+		bne momentum0		; branch over jmp to end if select switch is not being held
 		jmp momentum9
-momentum0a
 
 momentum0
 		; control loops back here when we iterate over the movable bodies
@@ -186,7 +188,7 @@ momentum0
 		clc
 		lda playerz,x
 		adc #01
-		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
+;		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?  XXX I might be dreaming, but it seems like wrapping around the edge of a level actually works
 		sta playerz,x
 		jmp momentum2
 momentum1
@@ -279,7 +281,7 @@ momentum5c
 momentum9
 		inx
 		cpx #num_bodies
-		bcs momentum9a			; branch to exit if Y >= num_bodies
+		beq momentum9a			; branch to exit if Y >= num_bodies
 		jmp momentum0			; else go back for another pass on the next movable body
 momentum9a
 		ENDM
@@ -541,6 +543,7 @@ collisions9a
 ;
 
 ; takes deltaz and deltay
+; returns the scanline to draw at in A
 ; index the arctan table with four bits of each delta
 ; we use the most significant non-zero four bits of each delta
 ; the arctangent table is indexed by the ratio of the y and z deltas
@@ -571,7 +574,7 @@ collisions9a
 		bit deltay
 		bpl .platlinedeltastuff1
 		; platform is above us
-		lda #[viewsize - 1]
+		lda #[viewsize - 1]		; is this correct? XXX or are we off by one?
         jmp .platarctan9
 .platlinedeltastuff1
 		; platform is below us
@@ -783,17 +786,125 @@ collisions9a
 
 ; update the frame buffer with enemy data
 		MAC _drawenemies
-		ldy #1					; object 0 is the player; start at object 1
-.drawenemies1
+.drawenemies
+		ldy #1					; object 0 is the player; start at object 1 XXX don't try to loop over multiple enemies yet, and when we do that, we'll need a memory location; lots of stuff in here uses Y
+.drawenemies0
 
-; XXX do stuff
+; compute deltaz, deltay
+
+		lda playerz,y			; deltaz = enemyz - playerz (positive is forward of us)
+		sec
+		sbc playerz
+		bpl .drawenemies0b		; branch to continue if enemy is >= players position
+		jmp .drawenemies8 		; loop and consider next enemy if this enemy is behind the player
+.drawenemies0b
+		sta deltaz
+
+		lda playery				; deltay = playery - enemyy
+		sec
+		sbc playery,y
+		sta deltay				; okay if deltay is negative as long as deltaz >= deltay
+.drawenemies0c
+
+		_absolute				; absolute of deltay
+		clc
+		cmp deltaz
+		bmi .drawenemies0a		; branch to continue on if Z>Y
+		beq .drawenemies0a		; branch to continue on if Z==Y
+		jmp .drawenemies8		; out of the field of view; branch to try the next monster
+.drawenemies0a
+
+; clobbers tmp1 and tmp2
+		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+.drawenemies0d					; unit test breakpoint
+		sta lastline			; scanline to draw at
+
+; clobbers tmp1 and tmp2
+		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+;		sta tmp1				; record the line size for the purpose of z-buffering later
+		tax						; the line size for z-buffering
+
+.drawenemies0e					; unit test breakpoint
+		ldy #0					; if its out of range of our table, then use the smallest size; this is an index into the nusize table
+		cmp #20
+		bpl .drawenemies1
+		ldy #1					; middle range
+		cmp #10
+		bpl .drawenemies1
+		ldy #2					; close range
+.drawenemies1
+		sty tmp2				;  Y contains the low two bits to draw, which is the players size
+
+; compute starting and ending scan lines to draw this enemy on, and loop over them.
+; on the last line that we draw, or if find that a bit of platform is closer than the enemy we're drawing, we specify the 0 offset into the pattern buffer, which is blank pattern data.
+; XXX should also use one of three sprite stripts depending on range (close, middle, far)
+
+		lda #1					; start at the top of the data in the enemy sprite strip
+		sta enemydata
+
+		lda lastline			; compute the first line to draw the player on to starting from the scanline the enemy is centered on
+		clc
+		adc enemyheights,y		; key the horizontal size off of the vertical size; the screen buffer is stored upside down so this is our start
+.drawenemies1a					; unit test breakpoint
+		tay
+
+; loop over the framebuffer lines
+
+		cpy #viewsize
+		bpl .drawenemies7		; don't start drawing until we're actually on the screen; branch to iterate to the next line of enemy if the current line > viewsize
+
+.drawenemies2
+		; 
+
+		; do z-buffering using the arctan we saved in X
+		; the scanline to draw to is in Y
+		; from _plotonscreen
+		lda view,y				; get the line width of what's there already
+		and #%00011111			; mask off the color part and any other data
+		cmp perspectivetable,x	; compare to the fatness of line we wanted to draw
+		bpl .drawenemies2a		; what we wanted to draw is smaller.  that means it's further away.  skip it.
+
+		; draw a line of our enemy bird
+		lda enemydata
+		asl
+		asl							; 000.xxx.00 sets the line of sprite data
+		ora tmp2					; 000.000.xx sets the sprite width
+		ora #%11100000				; 111.000.00 marks it as a sprite update line
+		bne .drawenemies2b			; always
+
+.drawenemies2a
+		; enemy is obscured; stop drawing
+		lda #%11100000
+		; fall through
+
+.drawenemies2b
+		; either the draw stop command gets written, or the size/graphics update does
+		sta view,y
+
+.drawenemies7
+		; move to the next line of player graphic data to use
+		inc enemydata
+		; move to the next screen line to draw on
+		tya
+		clc
+		sbc tmp2				; 0-2, plus 1 from carry; move towards lastline / the start of the frame buffer / the bottom of the screen
+		tay
+		cpy #viewsize
+		bpl .drawenemies7		; don't start drawing until we're actually on the screen
+		cpy lastline			; the scanline we pegged the enemy as standing on
+		bpl .drawenemies2		; if we're not on the last line, branch back up and loop; branch if current line (Y) < lastline
+
+		; turn off sprite drawing
+		lda #%11100000
+		sta view,y
 
 .drawenemies8
-		inx
-		cpx #num_bodies
-		bcs .drawenemies9		; branch to exit if Y >= num_bodies
-		jmp .drawenemies1		; else go back for another pass on the next movable body
-.drawenemies9
+		; go to the next monster and loop back to the beginning if we haven't run out of them XXX disabled and we need to use a memory location for this iterator
+        ; inx
+        ; cpx #num_bodies
+        ; bcs .drawenemies9		; branch to exit if Y >= num_bodies
+        ; jmp .drawenemies0		; else go back for another pass on the next movable body
+; .drawenemies9
 		ENDM
 
 
@@ -830,7 +941,23 @@ reset0  sta $80,x
 		ldy #32
 		sty playery
 
+		; enemy location on map XXX should be random or something
+		ldy #10
+		sty playerz+1
+		ldy #60
+		sty playery+1
+
 		; some player setup
+		; burn some cycles until the scan line is at where we want to reset the player to being at (RESP0)
+		sta WSYNC
+		ldy #7
+reset1
+		dey
+		bne reset1
+
+		lda #$55				; XXXX color of player; this could be moved to be at reset time too
+		sta COLUP0
+		sta RESP0				; XXXX move this around to be timed so that it positions P0 in the center of the screen; value doesn't matter; it's just a strobe
 
 
 ;
@@ -840,20 +967,24 @@ reset0  sta $80,x
 
 startofframe
 
-		; we turn VBLANK off here at the end of the line
-
 		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
 
-		lda #%00000001			; reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
-		sta CTRLPF
+		lda #%01000000			; turn VBLANK off near the end of line 37, leaving the joystick latch on
+		sta VBLANK				; ideally, this would be done near the end of the scanline
 
-		ldy #viewsize			; indexes the view table and is our scanline counter
-		sty scanline
+		; this is terrible, but try to do enemy drawing here.  trying to do it before drawing the platforms has serious problems.
+		; of course, it would be a lot easier to just set a memory pointer or two that data got pulled from every scan line than doing all of this crap.
+		; this buys us clipping.
 
-		lda playery				; 1/4th playery for picking background color for shaded sky/earth
-		lsr
-		lsr
-		sta skyline
+		lda #17
+		sta TIM64T
+
+		_drawenemies
+
+		; wait for the timer to tick down so we can stay in sync
+startofframe0
+		lda	INTIM
+		bne startofframe0
 
 		; use tmp1, tmp2 as a pointer to sprite data
 ; XXX not currently doing this; currently subscripting enemybird directly
@@ -862,13 +993,7 @@ startofframe
 ;		lda #>enemybird			; 
 ;		sta playerdata+1
 
-		; player gunk
-
-		lda #$55				; XXXX color of player; this could be moved to be at reset time too
-		sta COLUP0
-		sta RESP0				; XXXX move this around to be timed so that it positions P0 in the center of the screen; value doesn't matter; it's just a strobe
-
-		; XXX testing add some bird draw commands to the frame buffer
+		; XXX was using this approach and I'm tempted to go back to it; it would simplify things a lot, even if clipping wouldn't be right; testing add some bird draw commands to the frame buffer
 		; lda #%11100101
 		; sta view+50				; remember this goes backwards, so that's 50 from the bottom
 		; lda #%11110101
@@ -876,28 +1001,27 @@ startofframe
 		; lda #%11100001
 		; sta view+42
 
-		lda #%01000000			; turn VBLANK off near the end of line 37, leaving the joystick latch on
-		sta VBLANK
-
-		; wait for sync and then go to renderpump
+		; wait for sync, then do some setup in the 30 cycles we have before we have to be at the start of 'renderpump'
 
 		sta WSYNC				;      0 ... stella considers this to be the first scanline.  we don't draw anything, just get things ready to draw on the next one.
 scanline1
-		nop						; +2   2
-		nop						; +2   4
-		nop						; +2   6
-		nop						; +2   8
-		nop						; +2  10 
-		nop						; +2  12
-		nop						; +2  14
-		nop						; +2  16 
-		nop						; +2  18
-		nop						; +2  20
-		nop						; +2  22
+		lda #%00000001			; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
+		sta CTRLPF				; +3   5
+
+		ldy #viewsize			; +2   7 ... indexes the view table and is our scanline counter
+		sty scanline			; +3  10
+
+		lda playery				; +3  13 ... 1/4th playery for picking background color for shaded sky/earth
+		lsr						; +2  15
+		lsr						; +2  17
+		sta skyline				; +2  20
+
+		nop						; +2  22 ... eat up some time
 		nop						; +2  24
 		nop						; +2  26
 		nop						; +2  28
-		nop						; +2  30 ... XXXX save some ROM space and do this in a loop
+		nop						; +2  30
+
 		jmp renderpump			; +3     ... always; we need to arrive on cycle 33
 
 ; table of useful NUSIZ0 values; translates two bits to three bits; the %11 index is unused
@@ -907,7 +1031,6 @@ nusize
 ; critically timed render loop
 
 enemy
-		; XXX
 		; control goes here to turn on/off drawing of an enemy and set its width instead of drawing a platform line
 		; A and X contain the current view[] for this scan line; the last five bits contain data specific to this case
 		; Y is 0
@@ -916,20 +1039,18 @@ enemy
 
 		tay						; +2  49 (47 when we arrive) ... make a copy of the view[] entry
 
-; XXXX this doesn't seem to be working for some reason
 		and #%00000011			; +2  51 ... the bottom two bits cointain the sprite width; 000, 101, 111 are the only reasonable values to plug in to NUSIZ0
 		tax						; +2  53 ... XXX with a large-ish table with a lot of redundancy in it, we could avoid having to back up A in Y, mask part off, then reload it from Y again
 		lda nusize,x			; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
 		sta NUSIZ0				; +3  60
 
 		; update player graphics data
-test
 		tya						; +2  62
 		and #%00011100			; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
 		lsr						; +2  66 ... XXX this could be skipped
 		lsr						; +2  68 ... XXX this could be skipped
 		tay						; +2  70
-		lda enemybird,y			; +4  74
+		lda enemybird1,y		; +4  74
 		sta GRP0				; +3 ->1 (went up to 77 which rolls over 76 to 1; we head into hblank here and start a new scanline)
 		
 		; update background color; this is a duplicate of code from the other code path
@@ -944,7 +1065,7 @@ test
 
 		nop						; +2  25 XXX wasting time
 		nop						; +2  27
-		and #00					; +3  30 waste time
+		and $0					; +3  30 waste time
 		jmp renderpump			; +3  33 (have to get back to renderpump with exactly 33 cycles on the clock when we get there)
 
 platforms
@@ -973,7 +1094,7 @@ renderpump
 ; would it be faster to put scanline back into RAM rather than trying to use S?
 ; control arrives here with exactly 33 cycles on the clock
 
-		ldy scanline		; +3   36
+		ldy scanline		; +3   36 (33 when execution arrives)
 
 		; get value for COLUPF ready in Y
 		lax view,y			; +4   40
@@ -1004,6 +1125,15 @@ renderdone
 		; renderdone happens on line 145
 		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the last platform line
 
+		lda #0
+		sta GRP0			; turn sprite data off just in case it wasn't in the framebuffer instructions
+
+		; black to a back background, and blank out the playfield
+		lda #$00
+		sta COLUBK
+		sta PF0
+		sta PF1
+		sta PF2
 
 ;
 ; debugging output (a.k.a. score)
@@ -1011,13 +1141,6 @@ renderdone
 		; re-adjust after platform rendering
 score
 
-		; black to a back background
-		lda #$00
-		sta COLUBK
-		lda #0
-		sta PF0
-		sta PF1
-		sta PF2
 		lda #%00001110
 		sta COLUPF
 		lda  #4
@@ -1066,22 +1189,27 @@ scoredone						; scanline 158, s.cycle 66
 ; plus 34 more scanlines for overscan
 ; roughly:  n * 76 machine cycles / 64 cycle timer blocks
 
-		lda #125				; XXX I've been just tweaking this depending on what stella does
+		lda #113				; XXX I've been just tweaking this depending on what stella does
 		sta TIM64T
+
+		lda #0					; phase 0 in the vblank process
+		sta caller
 
 		_collisions
 		_readstick
 		_momentum
 		; XXX _ai
-		_drawenemies
 
-		lda #0					; phase 0 in the vblank process
-		sta caller
-
-
+		; zero out the framebuffer
+		ldy #viewsize
+		ldx #$00
+platlevelclear2
+		stx view,y
+		dey
+		bne platlevelclear2
 
 ;
-; update frame buffer
+; draw plateforms into the frame buffer
 ;
 
 ; iterate through the platforms ahead of the player and updates the little frame buffer of line widths.
@@ -1094,7 +1222,7 @@ scoredone						; scanline 158, s.cycle 66
 ; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform -- counts down from level0[curplat][end]-playerz to level0[curplat][end]-playerz (which is 0)
 ; using the S register now for curlineoffset
 
-platlevelclear					; hit end of the level:  clear out all incremental stuff and go to the zeroith platform
+platlevelclear					; clear out all incremental stuff and go to the zeroith platform
 		; start over rendering
 
         ldy #0
@@ -1104,22 +1232,7 @@ platlevelclear					; hit end of the level:  clear out all incremental stuff and 
 		sty curplat
 		dey				; # make lastline $ff
 		sty lastline
-
-		; zero out the framebuffer
-		ldy #viewsize
-		ldx #$00
-platlevelclear2
-		stx view,y
-		dey
-		bne platlevelclear2
-		jmp platnext0
-		
-platresume
-		ldy curplat			; where we in middle of a platform (other than the 0th one)?
-		beq platnext0		; starting at zero, so go seek to the first platform the player can actually see
-		lda level0,y		; did we already hit the end of the level last call this frame?
-		beq platnext0vblanktimer ;  if so, just go busy spin
-        bne platrenderline     ; yeah?  continue rendering the current platform
+		; fall through to platnext0
 
 platnext0
 		; is there a current platform?  if not, go busy spin on the timer.  if so, figure out if any of it is still in front of the player.
@@ -1199,8 +1312,8 @@ platnextline
 		lda INTIM
 		beq platnextline0c		; timer expired?  branch to immediately deal with it
 platnextline0a
-		cmp #5
-		bpl platnextline0		; branch if INTIM >= 5; we have time to find the next platform line
+		cmp #6
+		bpl platnextline0		; branch if INTIM >= 6; we have time to find the next platform line; just bumped this to 6 after catching 2.vsync1 continuing on 5 and then next loop, being negative
 platnextline0b					; otherwise, burn time until the timer runs out, handle the video control, and continue
 		lda	INTIM
 		bne platnextline0b
@@ -1528,6 +1641,7 @@ distancemods
 
 arctangent
 
+
                 ; z = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
                 dc.b 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0; y = 0
                 ; z = 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
@@ -1560,23 +1674,6 @@ arctangent
                 dc.b 51, 48, 46, 45, 43, 41, 40, 38, 37, 35, 34, 33, 32, 31, 30, 29; y = 14
                 ; z = 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
                 dc.b 51, 49, 47, 45, 43, 42, 40, 39, 38, 36, 35, 34, 33, 32, 31, 30; y = 15
-
-;
-;
-;
-
-enemybird
-
-		align 256
-
-		.byte %00000000
-		.byte %00011100
-		.byte %00011100
-		.byte %01001000
-		.byte %01111110
-		.byte %11111111
-		.byte %01111110
-		.byte %00100100
 
 
 ;
@@ -1616,6 +1713,8 @@ platformcolors
 ;     print join ', ', map { sprintf "%%%08b", $_ } map { $color | int($_) } @brightnesses;
 ;     print "\n";
 ; }
+
+		align 256
 
 		.byte %00011101, %00011101, %00011101, %00011100, %00011011, %00011011, %00011010, %00011010, %00011001, %00011001, %00011000, %00011000, %00010111, %00010110, %00010110, %00010101, %00010100, %00010100, %00010011, %00010010, %00010001, %00010001, %00010000, %00001111, %00001110, %00001101, %00001100, %00001010, %00001001, %00000111, %00000101, %00000000
 		.byte %00111101, %00111101, %00111101, %00111100, %00111011, %00111011, %00111010, %00111010, %00111001, %00111001, %00111000, %00111000, %00110111, %00110110, %00110110, %00110101, %00110100, %00110100, %00110011, %00110010, %00110001, %00110001, %00110000, %00101111, %00101110, %00101101, %00101100, %00101010, %00101001, %00100111, %00100101, %00100000
@@ -1692,6 +1791,7 @@ background
 		.byte $00, $00, $00, $00, $00
 		.byte $00, $00, $00, $00, $00
 
+
 ;
 ; perspectivetable
 ;
@@ -1715,6 +1815,31 @@ perspectivetable
 		 dc.b 19, 19, 19, 19, 19, 19, 19, 19, 17, 16, 14, 13, 12, 11, 10, 10, 9, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 
 ;
+;
+;
+
+		align 256
+
+enemybird1
+
+;		.byte %00000000
+;		.byte %00011100
+;		.byte %00011100
+;		.byte %01001000
+;		.byte %01111110
+;		.byte %11111111
+;		.byte %01111110
+;		.byte %00100100
+
+		.byte 0, $08, $1c, $08, $3e, $7f, $3e, $1c, $14
+
+enemybird2
+
+		.byte 0, $1c, $08, $08, $3e, $3e, $7f, $1c, $14
+
+; XXX platformcolors, background, enemybird should all fit on one page; if not, add an align statement; all of those are used in critically timed code
+
+;
 ; level0
 ;
 
@@ -1731,6 +1856,17 @@ level0
 ;
 ;
 ;
+
+; give scanline counts for enemies being drawn at three distances (far, middle, close)
+
+enemyheights
+		.byte 8, 16, 24			; XXX tweak this... 8 high by every line, 8 high by every other line (size = 2), 8 by every third line (size = 3)
+
+;
+;
+;
+
+; doesn't need to be page aligned as the display kernel code that uses this has cycles to spare and uses WSYNC
 
 NUMBERS
     .byte %11101110
