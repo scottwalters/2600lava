@@ -870,22 +870,28 @@ startofframe
 
 		_drawenemies
 
+		; use tmp1, tmp2 as a pointer to sprite data
+		; use one of the two graphics alternately
+pickbird
+		lda tickcounter	
+		and #%00001000
+		beq pickbird1
+		lda #<enemybird1			; low byte first
+		jmp pickbird2
+pickbird1
+		lda #<enemybird2
+pickbird2
+		sta playerdata
+		lda #>enemybird1			; both need to be on the same page
+		sta playerdata+1
+
 		; wait for the timer to tick down so we can stay in sync
+		; then wait for sync, then do some setup in the 30 cycles we have before we have to be at the start of 'renderpump'
 startofframe0
 		lda	INTIM
 		bne startofframe0
-
-		; use tmp1, tmp2 as a pointer to sprite data
-		; XXX was using this approach and I'm tempted to go back to it; it would simplify things a lot, even if clipping wouldn't be right; testing add some bird draw commands to the frame buffer
-; XXX not currently doing this; currently subscripting enemybird directly
-;		lda #<enemybird			; low byte first XXX need to actually start past the graphics data so we default to not drawing the bird until instructed to do so
-;		sta playerdata
-;		lda #>enemybird			; 
-;		sta playerdata+1
-
-		; wait for sync, then do some setup in the 30 cycles we have before we have to be at the start of 'renderpump'
-
 		sta WSYNC				;      0
+
 scanline1
 		lda #%00000001			; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
 		sta CTRLPF				; +3   5
@@ -898,6 +904,7 @@ scanline1
 		lsr						; +2  17
 		sta skyline				; +2  20
 
+; load playerdata here...?  enough time?
 		nop						; +2  22 ... eat up some time
 		nop						; +2  24
 		nop						; +2  26
@@ -926,34 +933,29 @@ enemy
 		lda nusize,x			; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
 		sta NUSIZ0				; +3  60
 
-; sketching out some logic to animate the bird; would be quicker to set up a pointer beforehand and then do lda (tmp1),y
-;		lda tickcounter			; +3
-;		and #%00001000			; +2
-;		sta tmp1				; +3
-
 		; update player graphics data
 		tya						; +2  62
 		and #%00011100			; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
 		lsr						; +2  66 ... XXX this could be skipped
 		lsr						; +2  68 ... XXX this could be skipped
-;		ora tmp1				; +3
 		tay						; +2  70
-		lda enemybird1,y		; +4  74
-		sta GRP0				; +3 ->1 (went up to 77 which rolls over 76 to 1; we head into hblank here and start a new scanline)
+		; lda enemybird1,y		; +4  74
+		lda (playerdata),y		; +5  75
+		sta GRP0				; +3 ->2 (went up to 78 which rolls over 76 to 2; we head into hblank here and start a new scanline)
 		
 		; update background color; this is a duplicate of code from the other code path
-		lda scanline			; +3   4
-		adc skyline				; +3   7
-		tay						; +2   9
-		lda background,y		; +4  13
-		sta COLUBK				; +3  16 (has to happen before cycle 22)
+		lda scanline			; +3   5 
+		adc skyline				; +3   8
+		tay						; +2  10
+		lda background,y		; +4  14
+		sta COLUBK				; +3  17 (has to happen before cycle 22)
 
-		dec scanline			; +5  21
-		bmi renderdone			; +2  23 (counting the case where the branch isn't taken); XXX double check this one
+		dec scanline			; +5  22
+		bmi renderdone			; +2  24 (counting the case where the branch isn't taken); XXX double check this one
 
-		nop						; +2  25 XXX wasting time
-		nop						; +2  27
-		and $0					; +3  30 waste time
+		nop						; +2  26 XXX wasting time
+		nop						; +2  28
+		nop						; +2  30 waste time
 		jmp renderpump			; +3  33 (have to get back to renderpump with exactly 33 cycles on the clock when we get there)
 
 platforms
