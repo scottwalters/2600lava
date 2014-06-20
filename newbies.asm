@@ -23,7 +23,7 @@ monster1zspeed	ds 1
 
 ; numeric output
 
-num0    ds 1		; number to output, left
+num0    ds 1		; number to output, left XXX take this back
 
 ; various
 
@@ -240,6 +240,7 @@ momentum4
 		;
 		; subtract gravity from vertical speed
 		;
+		; cap playeryspeed at terminal volicity
 		; from the signed comparison tutorial at http://www.6502.org/tutorials/compare_beyond.html#5
 		; "to compare the signed numbers NUM1 and NUM2, the subtraction NUM1-NUM2 is performed, and NUM1 < NUM2 when N eor V is 1, and NUM1 >= NUM2 when N eor V is 0"
 		; this method takes advantage of N being the same (and based on) bit 7 of the sbc result in A.
@@ -255,8 +256,6 @@ momentum4a
 		lda playeryspeed,x			; apply gravity
 		sec
 		sbc #gravity
-		; sta num0 ; testing -- playeryspeed
-		; cap playeryspeed at terminal volicity
 		sta playeryspeed,x
 momentum4b
 		;
@@ -276,7 +275,6 @@ momentum5b
 momentum5c
 		; done with forward/backward momentum decay
 		; lda playerzspeed
-		; sta num0 ; testing -- playerzspeed
 
 momentum9
 		inx
@@ -887,12 +885,15 @@ collisions9a
 		; move to the next screen line to draw on
 		tya
 		clc
-		sbc tmp2				; 0-2, plus 1 from carry; move towards lastline / the start of the frame buffer / the bottom of the screen
+		sbc tmp2				; spread GRP0 updates out vertically to stretch the player out and allow chances to upldate the platform data; tmp2 is 0-2, plus 1 from carry
 		tay
 		cpy #viewsize
 		bpl .drawenemies7		; don't start drawing until we're actually on the screen
-		cpy lastline			; the scanline we pegged the enemy as standing on
-		bpl .drawenemies2		; if we're not on the last line, branch back up and loop; branch if current line (Y) < lastline
+;		cpy lastline			; the scanline we pegged the enemy as standing on
+;		bpl .drawenemies2		; if we're not on the last line, branch back up and loop; branch if current line (Y) < lastline
+		lda enemydata
+		cmp #8
+		bmi .drawenemies2
 
 		; turn off sprite drawing
 		lda #%11100000
@@ -1122,74 +1123,25 @@ renderpump
 		bpl platforms		; +3   76 (counting the case where it's taken; this has to come out to exactly 76 cycles)
 
 renderdone
-		; renderdone happens on line 145
+		; renderdone happens on scanline 145 XXX update this
 		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the last platform line
 
 		lda #0
 		sta GRP0			; turn sprite data off just in case it wasn't in the framebuffer instructions
 
 		; black to a back background, and blank out the playfield
-		lda #$00
 		sta COLUBK
 		sta PF0
 		sta PF1
 		sta PF2
 
-;
-; debugging output (a.k.a. score)
-;
-		; re-adjust after platform rendering
-score
-
-		lda #%00001110
-		sta COLUPF
-		lda  #4
-		sta  CTRLPF             ; Double, instead of reflect.
-		clc
-        lda  #0
-		sta  NUMG0              ; Clear the number graphics buffers... they won't be calculated yet,
-		sta  PF1
-		sta  tmp1				; using temp as our own scan line counter, since we need to adc it.
-		        		        ; the game will try to draw with them anyway.
-VSCOR	sta  WSYNC              ; Start with a fresh scanline.
-		sta  PF1				; +3
-		lda  num0				; +3 
-		and  #$f0               ; +2    left digit
-		lsr						; +2    offset 3 bits from right for *8 into lookup table
-		adc  tmp1				; +3    which scanline
-		tay						; +2 
-		lda  NUMBERS,Y          ; +4    Get left digit.
-		and  #$F0       		; +2 
-		sta  NUMG0     			; +3 
-		lda  num0				; +3 
-		and  #$0f               ; +2    right digit
-		asl						; +2    shift right 3 bits for *8 in lookup table
-		asl						; +2 
-		asl						; +2 
-		adc  tmp1				; +3    which scanline
-		tay						; +2 
-		lda  NUMBERS,Y          ; +4    Get right digit.
-		and  #$0f				; +2 
-		ora  NUMG0				; +3 
-		sta  PF1				; +3
-		lda #0
-		inc tmp1
-		ldy  tmp1				; +3 
-		cpy  #7					; +3 
-		bne  VSCOR				; +5 taken
-scoredone						; scanline 158, s.cycle 66
-
-		; scoredone happens on scanline 154
-
-		lda #0
-		sta PF1
 		sta WSYNC
 
 ; 192 - 154
 ; plus 34 more scanlines for overscan
 ; roughly:  n * 76 machine cycles / 64 cycle timer blocks
 
-		lda #113				; XXX I've been just tweaking this depending on what stella does
+		lda #121				; XXX I've been just tweaking this depending on what stella does
 		sta TIM64T
 
 		lda #0					; phase 0 in the vblank process
@@ -1226,7 +1178,6 @@ platlevelclear					; clear out all incremental stuff and go to the zeroith platf
 		; start over rendering
 
         ldy #0
-        ; sty num0  	; if we use it as a counter during rendering
 
 		sty deltaz
 		sty curplat
@@ -1831,7 +1782,15 @@ enemybird1
 ;		.byte %01111110
 ;		.byte %00100100
 
-		.byte 0, $08, $1c, $08, $3e, $7f, $3e, $1c, $14
+		.byte 0
+        .byte %00001000
+;        .byte %00011100
+        .byte %00001000
+        .byte %01111111
+        .byte %00111110
+        .byte %00111110
+        .byte %00011100
+        .byte %00010100
 
 enemybird2
 
