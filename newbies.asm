@@ -1,6 +1,6 @@
  
 ; dasm newbies.asm -onewbies.bin -lnewbies.lst -snewbies.sym -f3
-; makeawav -ts a.out
+; makewav -ts a.out
 
 		processor 6502
 		include "vcs.h"
