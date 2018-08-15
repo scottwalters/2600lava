@@ -68,16 +68,17 @@ sub symbols {
         }
 
         sub name_that_location {  
-            # XXX possible name conflict with the assembly
             my $self = shift;
             my $loc = shift; 
             my %locations = reverse %$self;
-            return $locations{$loc} if $locations{$loc}; 
-            # it looks like one more instruction executes after run_cpu() stops things, so try to deal with 1-3 byte instructions that don't branch again to try to figure out which label we tried to stop at
-            return $locations{$loc-1} if $locations{$loc-1};
-            return $locations{$loc-2} if $locations{$loc-2};
-            return $locations{$loc-3} if $locations{$loc-3};
-            return 'unknown location';
+            my $best_loc_match = 0;
+            my $best_loc_match_name = 'no match';
+            for my $location (sort { $a <=> $b } grep { m/^\d+$/ } keys %locations ) {
+                next if $location > $loc;
+                $best_loc_match = $location;
+                $best_loc_match_name = $locations{$location};      # last symbol name on or before the current address
+            }
+            return $best_loc_match_name;
         }
 
         sub run_cpu {
