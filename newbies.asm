@@ -66,7 +66,7 @@ viewsize	= [ $ff - view ]
 ; constants
 ;
 
-num_bodies	= 2
+num_bodies	= 2                ;  playerz, monster1z, and so on for other variables
 
 ;
 ; momentum/gravity constants
@@ -144,10 +144,10 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
 		; 37 lines of vblank next
 		; start vblank
-		lda #%01000010			; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
+		lda #%01000010				; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
 		sta VBLANK
 
-		lda #40					; adjusting this based on experimenting with stella
+		lda #40					; adjusting this based on experimenting with stella XXX
 		sta TIM64T
 
 		inc caller				; run .vsync0 next time
@@ -181,17 +181,11 @@ _maybe_vsync9
 		;
 		; z speed
 		;
-		ldx #0				; iterate over the objects to apply momentum to
-momentum
-
-		; skip applying momentum to the player if the select switch is being held; debug mode
-		lda SWCHB
-		and #%00000010		; select switch
-		bne momentum0		; branch over jmp to end if select switch is not being held
-		jmp momentum9
+		ldx #0				; iterate over the objects to apply momentum to up to num_bodies
 
 momentum0
 		; control loops back here when we iterate over the movable bodies
+		; z speed first
 		lda playerzspeed,x
 		bmi momentum1
 		; positive case
@@ -202,7 +196,7 @@ momentum0
 		clc
 		lda playerz,x
 		adc #01
-;		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?  XXX I might be dreaming, but it seems like wrapping around the edge of a level actually works
+;		bcs momentum2		; branch if we carried; don't wrap playerz above 255 XXX actually, wouldn't this be the win condition for the level?
 		sta playerz,x
 		jmp momentum2
 momentum1
@@ -214,15 +208,13 @@ momentum1
 		sbc tmp1
 		sta playerzlo,x
 		lda playerz,x
-;		beq momentum1a		; but don't go below 0; XXX testing; actually, we do want enemies flying towards us to be able to warp off the end of the level
+;		beq momentum1a		; but don't go below 0; XXX testing; actually, we do want enemies flying towards us to be able to warp off the end of the level XXX show enemy Z to see what's happening
 		sbc #0				; if we barrowed above, this will effective decrement playerz by one
 		sta playerz,x
 momentum1a
 
 momentum2
-        ;
 		; y speed
-        ;
 		lda playeryspeed,x
 		bmi momentum3
 		; positive case
@@ -265,8 +257,8 @@ momentum4
 		eor #%10000000				; flip the sign bit if V is clear; this makes sense, since the definition of V is that it gets set when the result leaves the sign bit wrong
 momentum4a
 		; "If the N flag is 1, then A (signed) < NUM (signed) and BMI will branch"
-        ; "If the N flag is 0, then A (signed) >= NUM (signed) and BPL will branch" 
-		bmi momentum4b				; if playeryspeed < terminal_velocity, branch to skip applying more gravity
+		; "If the N flag is 0, then A (signed) >= NUM (signed) and BPL will branch" 
+		bmi momentum4b				; if playeryspeed < terminal_velocity (negative numbers), branch to skip applying more gravity
 		lda playeryspeed,x			; apply gravity
 		sec
 		sbc #gravity
@@ -293,8 +285,9 @@ momentum5c
 momentum9
 		inx
 		cpx #num_bodies
-		beq momentum9a			; branch to exit if Y >= num_bodies
-		jmp momentum0			; else go back for another pass on the next movable body
+;		beq momentum9a			; branch to exit if Y >= num_bodies
+;		jmp momentum0			; else go back for another pass on the next movable body
+		bne momentum0
 momentum9a
 		ENDM
 
@@ -569,19 +562,18 @@ readstick9
 
 .plotonscreen
 		cpx lastline			; are we drawing on top of the last line we drew for this platform?
-		; beq .plot9				; branch if nothing to do; go to the end
 		beq .plot4			; branch if nothing to do; go to the end; .plot9 is out of range now, so bouncing off of a springboard to it
 .plot0
 
-		stx tmp1				; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
-		ldx curplat				; fetch the current platform color and stash it in tmp2 and then restore X to be the current line to draw at
+		stx tmp1			; hold the new lastline here until after we're done recursing to fill in the gaps; only do this when we're first called, not when we recurse
+		ldx curplat			; fetch the current platform color and stash it in tmp2 and then restore X to be the current line to draw at
 		lda level0+3,x
 		sta tmp2
 		ldx tmp1
 
 		lda lastline
 		; bmi .plot_simple		; .plot_simple is out of range; no last line if the highbit is set; use the simple case
-		bmi .plot5				; .plot_simple is out of range; springboard to it; no last line if the highbit is set; use the simple case; out of range now
+		bmi .plot5			; .plot_simple is out of range; springboard to it; no last line if the highbit is set; use the simple case; out of range now
 
 		cpx lastline
 		bmi .plot_up0			; branch if we're now drawing upwards relative the last plot; else we're drawing downwards relative the last plot
@@ -593,23 +585,23 @@ readstick9
 		inc lastline			; pre-increment lastline so that we can do an equality comparision rather than a +/- 1 comparison
 
 .plot_down1
-		lda view,x				; +4  9 ... get the line width of what's there already
+		lda view,x			; +4  9 ... get the line width of what's there already
 		and #%00011111			; +2 11 ... mask off the color part and any other data
-		cmp perspectivetable,y	; +4 15 ... compare to the fatness of line we wanted to draw
+		cmp perspectivetable,y		; +4 15 ... compare to the fatness of line we wanted to draw
 		bpl .plot_down2			; +2 17 ... what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
 
-		lda perspectivetable,y	; +4 21 ... perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
-		ora tmp2				; +3 24 ... add the platform color
-		sta view,x				; +4 28 ... draw to the framebuffer
+		lda perspectivetable,y		; +4 21 ... perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
+		ora tmp2			; +3 24 ... add the platform color
+		sta view,x			; +4 28 ... draw to the framebuffer
 
 .plot_down2
 		cpx lastline			; +3 31 ... we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  this routine updates lastline anyway.
-		beq .plot8				; +2 33 ... if lastline minus curline is exactly 1 away then our work is done; bail out (well below 64 cycles at this point)
+		beq .plot8			; +2 33 ... if lastline minus curline is exactly 1 away then our work is done; bail out (well below 64 cycles at this point)
 .plot_down2a
-		dex						; +2 35 ... drawing downwards relative last plot
-		lda	INTIM				; +2  2 ... worst case scenario, we read this as a '1' one cycle before it flips over to 0; in that case, we need to read it again within 64 cycles
+		dex				; +2 35 ... drawing downwards relative last plot
+		lda	INTIM			; +2  2 ... worst case scenario, we read this as a '1' one cycle before it flips over to 0; in that case, we need to read it again within 64 cycles
 		bne .plot_down1			; +3  5
-		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
+		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
 		bne .plot_down1			; loop always
 
 ; springboards
@@ -624,42 +616,42 @@ readstick9
 		dec lastline			; pre-decrement lastline so that we can do a straight equality comparison
 
 .plot_up1
-		lda view,x				; get the line width of what's there already
+		lda view,x			; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
-		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
+		cmp perspectivetable,y		; compare to the fatness of line we wanted to draw
 		bpl .plot_up2			; what we wanted to draw is smaller.  that means it's further away.  skip it.  but still see about filling in gaps.
 
 		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
-		ora tmp2				; add the platform color
-		sta view,x				; draw to the framebuffer
+		ora tmp2			; add the platform color
+		sta view,x			; draw to the framebuffer
 
 .plot_up2
 		cpx lastline			; #$99
-		beq .plot8				; if lastline minus curline is exactly 1 away then our work is done; bail out
+		beq .plot8			; if lastline minus curline is exactly 1 away then our work is done; bail out
 
-		inx						; drawing upwards relative last plot
+		inx				; drawing upwards relative last plot
 		; jmp .plot_up1			; always branch; recurse back in
 		lda	INTIM
 		bne .plot_up1
-		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
+		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
 		bne .plot_up1			; loop always
 
 .plot_simple
 		; handle the simple case of not having any gap to fill
 
-		lda view,x				; get the line width of what's there already
+		lda view,x			; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
-		cmp perspectivetable,y	; compare to the fatness of line we wanted to draw
-		bpl .plot8		; what we wanted to draw is smaller.  that means it's further away.  skip it.  but update lastline.
+		cmp perspectivetable,y		; compare to the fatness of line we wanted to draw
+		bpl .plot8			; what we wanted to draw is smaller.  that means it's further away.  skip it.  but update lastline.
 
 		; actually plot this line on the screen
-		lda perspectivetable,y	; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
-		ora tmp2				; add the platform color
-		sta view,x				; draw to the framebuffer and then just fallthrough to .plot8
+		lda perspectivetable,y		; perspectivetable translates distance to on-screen platform line width; 128 entries starting with 20s, winding down to 1s
+		ora tmp2			; add the platform color
+		sta view,x			; draw to the framebuffer and then just fallthrough to .plot8
 		; fall through
 
 .plot8
-		ldx tmp1				; after we're done recursing to fill in the gaps, update lastline
+		ldx tmp1			; after we're done recursing to fill in the gaps, update lastline
 		stx lastline
 .plot9
 		ENDM
@@ -671,7 +663,7 @@ readstick9
 ; update the frame buffer with enemy data
 		MAC _drawenemies
 .drawenemies
-		ldy #1					; object 0 is the player; start at object 1 XXX don't try to loop over multiple enemies yet, and when we do that, we'll need a memory location; lots of stuff in here uses Y
+		ldy #1				; object 0 is the player; start at object 1 XXX don't try to loop over multiple enemies yet, and when we do that, we'll need a memory location; lots of stuff in here uses Y
 .drawenemies0
 
 ; compute deltaz, deltay
@@ -684,13 +676,13 @@ readstick9
 .drawenemies0b
 		sta deltaz
 
-		lda playery				; deltay = playery - enemyy
+		lda playery			; deltay = playery - enemyy
 		sec
 		sbc playery,y
-		sta deltay				; okay if deltay is negative as long as deltaz >= deltay
+		sta deltay			; okay if deltay is negative as long as deltaz >= deltay
 .drawenemies0c
 
-		_absolute				; absolute of deltay
+		_absolute			; absolute of deltay
 		clc
 		cmp deltaz
 		bmi .drawenemies0a		; branch to continue on if Z>Y
@@ -699,31 +691,31 @@ readstick9
 .drawenemies0a
 
 ; clobbers tmp1 and tmp2
-		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+		_arctan				; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
 .drawenemies0d					; unit test breakpoint
 		sta lastline			; scanline to draw at
 
 ; clobbers tmp1 and tmp2
-		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
-;		sta tmp1				; record the line size for the purpose of z-buffering later
-		tax						; the line size for z-buffering
+		_plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+;		sta tmp1			; record the line size for the purpose of z-buffering later
+		tax				; the line size for z-buffering
 
 .drawenemies0e					; unit test breakpoint
-		ldy #0					; if its out of range of our table, then use the smallest size; this is an index into the nusize table
+		ldy #0				; if its out of range of our table, then use the smallest size; this is an index into the nusize table
 		cmp #20
 		bpl .drawenemies1
-		ldy #1					; middle range
+		ldy #1				; middle range
 		cmp #10
 		bpl .drawenemies1
-		ldy #2					; close range
+		ldy #2				; close range
 .drawenemies1
-		sty tmp2				;  Y contains the low two bits to draw, which is the players size
+		sty tmp2			;  Y contains the low two bits to draw, which is the players size
 
 ; compute starting and ending scan lines to draw this enemy on, and loop over them.
 ; on the last line that we draw, or if find that a bit of platform is closer than the enemy we're drawing, we specify the 0 offset into the pattern buffer, which is blank pattern data.
 ; XXX should also use one of three sprite stripts depending on range (close, middle, far)
 
-		lda #1					; start at the top of the data in the enemy sprite strip
+		lda #1				; start at the top of the data in the enemy sprite strip
 		sta enemydata
 
 		lda lastline			; compute the first line to draw the player on to starting from the scanline the enemy is centered on
@@ -743,22 +735,22 @@ readstick9
 		; do z-buffering using the arctan we saved in X
 		; the scanline to draw to is in Y
 		; from _plotonscreen
-		lda view,y				; get the line width of what's there already
+		lda view,y			; get the line width of what's there already
 		and #%00011111			; mask off the color part and any other data
-		cmp perspectivetable,x	; compare to the fatness of line we wanted to draw
+		cmp perspectivetable,x		; compare to the fatness of line we wanted to draw
 		bpl .drawenemies2a		; what we wanted to draw is smaller.  that means it's further away.  skip it.
 
 		; draw a line of our enemy bird
 		lda enemydata
 		asl
-		asl							; 000.xxx.00 sets the line of sprite data
-		ora tmp2					; 000.000.xx sets the sprite width
-		ora #%11100000				; 111.000.00 marks it as a sprite update line
+		asl					; 000.xxx.00 sets the line of sprite data
+		ora tmp2				; 000.000.xx sets the sprite width
+		ora #%11100000				; 111.xxx.xx marks it as a sprite update line
 		bne .drawenemies2b			; always
 
 .drawenemies2a
 		; enemy is obscured; stop drawing
-		lda #%11100000
+		lda #%11100000				; clear sprite pattern buffer
 		; fall through
 
 .drawenemies2b
@@ -771,7 +763,7 @@ readstick9
 		; move to the next screen line to draw on
 		tya
 		clc
-		sbc tmp2				; spread GRP0 updates out vertically to stretch the player out and allow chances to upldate the platform data; tmp2 is 0-2, plus 1 from carry
+		sbc tmp2			; spread GRP0 updates out vertically to stretch the player out and allow chances to upldate the platform data; tmp2 is player size which is 0-2 plus 1 from carry
 		tay
 		cpy #viewsize
 		bpl .drawenemies7		; don't start drawing until we're actually on the screen
@@ -858,20 +850,20 @@ startofframe
 
 		inc tickcounter
 
-		lda #%01000000			; turn VBLANK off near the end of line 37, leaving the joystick latch on
+		lda #%01000000				; turn VBLANK off near the end of line 37, leaving the joystick latch on
 		sta VBLANK				; ideally, this would be done near the end of the scanline
 
-		; this is terrible, but try to do enemy drawing here.  trying to do it before drawing the platforms has serious problems.
+		; this is terrible, but try to do enemy drawing here.  trying to do it before drawing the platforms has serious problems.  XXX
 		; of course, it would be a lot easier to just set a memory pointer or two that data got pulled from every scan line than doing all of this crap.
 		; this buys us clipping.
 
-		lda #17
+		lda #17					; 1088 cycles
 		sta TIM64T
 
 		_drawenemies
 
 		; use tmp1, tmp2 as a pointer to sprite data
-		; use one of the two graphics alternately
+		; use one of the two graphics alternately depending on tickcounter
 pickbird
 		lda tickcounter	
 		and #%00001000
@@ -893,25 +885,25 @@ startofframe0
 		sta WSYNC				;      0
 
 scanline1
-		lda #%00000001			; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
+		lda #%00000001				; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
 		sta CTRLPF				; +3   5
 
-		ldy #viewsize			; +2   7 ... indexes the view table and is our scanline counter
-		sty scanline			; +3  10
+		ldy #viewsize				; +2   7 ... indexes the view table and is our scanline counter
+		sty scanline				; +3  10
 
 		lda playery				; +3  13 ... 1/4th playery for picking background color for shaded sky/earth
-		lsr						; +2  15
-		lsr						; +2  17
+		lsr					; +2  15
+		lsr					; +2  17
 		sta skyline				; +2  20
 
 ; load playerdata here...?  enough time?
-		nop						; +2  22 ... eat up some time
-		nop						; +2  24
-		nop						; +2  26
-		nop						; +2  28
-		nop						; +2  30
+		nop					; +2  22 ... eat up some time
+		nop					; +2  24
+		nop					; +2  26
+		nop					; +2  28
+		nop					; +2  30
 
-		jmp renderpump			; +3     ... always; we need to arrive on cycle 33
+		jmp renderpump				; +3     ... always; we need to arrive on cycle 33
 
 ; table of useful NUSIZ0 values; translates two bits to three bits; the %11 index is unused
 nusize
@@ -926,37 +918,37 @@ enemy
 		; we aren't set up to update COLUBK and PF* registers
 		; there are exactly 47 cycles on the clock when execution arrives here
 
-		tay						; +2  49 (47 when we arrive) ... make a copy of the view[] entry
+		tay					; +2  49 (47 when we arrive) ... make a copy of the view[] entry
 
-		and #%00000011			; +2  51 ... the bottom two bits cointain the sprite width; 000, 101, 111 are the only reasonable values to plug in to NUSIZ0
-		tax						; +2  53 ... XXX with a large-ish table with a lot of redundancy in it, we could avoid having to back up A in Y, mask part off, then reload it from Y again
-		lda nusize,x			; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
+		and #%00000011				; +2  51 ... the bottom two bits cointain the sprite width; 000, 101, 111 are the only reasonable values to plug in to NUSIZ0
+		tax					; +2  53 ... XXX with a large-ish table with a lot of redundancy in it, we could avoid having to back up A in Y, mask part off, then reload it from Y again
+		lda nusize,x				; +4  57 ... XXX this may not be necessary if we're happy to use 2 bits worth of data to set the player data read position... could give back 6 cycles
 		sta NUSIZ0				; +3  60
 
 		; update player graphics data
-		tya						; +2  62
-		and #%00011100			; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
-		lsr						; +2  66 ... XXX this could be skipped
-		lsr						; +2  68 ... XXX this could be skipped
-		tay						; +2  70
-		; lda enemybird1,y		; +4  74
-		lda (playerdata),y		; +5  75
+		tya					; +2  62
+		and #%00011100				; +2  64 ... pick from 32 scan lines with a 4 scan line resolution; should be interesting
+		lsr					; +2  66 ... XXX this could be skipped
+		lsr					; +2  68 ... XXX this could be skipped
+		tay					; +2  70
+		; lda enemybird1,y			; +4  74
+		lda (playerdata),y			; +5  75
 		sta GRP0				; +3 ->2 (went up to 78 which rolls over 76 to 2; we head into hblank here and start a new scanline)
 		
 		; update background color; this is a duplicate of code from the other code path
-		lda scanline			; +3   5 
+		lda scanline				; +3   5 
 		adc skyline				; +3   8
-		tay						; +2  10
-		lda background,y		; +4  14
+		tay					; +2  10
+		lda background,y			; +4  14
 		sta COLUBK				; +3  17 (has to happen before cycle 22)
 
-		dec scanline			; +5  22
-		bmi renderdone			; +2  24 (counting the case where the branch isn't taken); XXX double check this one
+		dec scanline				; +5  22
+		bmi renderdone				; +2  24 (counting the case where the branch isn't taken); XXX double check this one
 
-		nop						; +2  26 XXX wasting time
-		nop						; +2  28
-		nop						; +2  30 waste time
-		jmp renderpump			; +3  33 (have to get back to renderpump with exactly 33 cycles on the clock when we get there)
+		nop					; +2  26 XXX wasting time
+		nop					; +2  28
+		nop					; +2  30 waste time
+		jmp renderpump				; +3  33 (have to get back to renderpump with exactly 33 cycles on the clock when we get there)
 
 platforms
 
@@ -964,18 +956,18 @@ platforms
 ; 69 cycles; if we take out the wsync, we have 7 cycles left; that's enough to copy sprite data from a pre-computed table, but we already use all of our RAM.  argh.
 ; 62 cycles!  14 cycles to spare.
 
-		sty COLUPF			; +3    3
+		sty COLUPF				; +3    3
 
 		tay					; +2    5
-		lda background,y	; +4    9
-		sta COLUBK			; +3   12
+		lda background,y			; +4    9
+		sta COLUBK				; +3   12
 
-		lda pf0lookup,x		; +4   16
-		sta PF0				; +3   19 ... this needs to happen sometime on or before cycle 22
-		lda pf1lookup,x		; +4   23
-		sta PF1				; +3   26 ... this needs to happen some time before cycle 28
-		lda pf2lookup,x		; +4   30
-		sta PF2				; +3   33
+		lda pf0lookup,x				; +4   16
+		sta PF0					; +3   19 ... this needs to happen sometime on or before cycle 22
+		lda pf1lookup,x				; +4   23
+		sta PF1					; +3   26 ... this needs to happen some time before cycle 28
+		lda pf2lookup,x				; +4   30
+		sta PF2					; +3   33
 renderpump
 
 		; get COLUPF, COLUBK, and scanline values ready to roll
@@ -997,7 +989,7 @@ renderpump
 		and #%00011111		; +2   48
 		tax					; +2   50
 
-        ; get value for COLUBK somewhat setup in A
+		; get value for COLUBK somewhat setup in A
 		lda scanline		; +3   53
 		adc skyline			; +3   56
 
