@@ -2,11 +2,9 @@
 
 # do some basic checks on how long it takes to render things
 
-# 76*(30+37+3) = 5320       76 cycles per line; 30 is overscan, 3 is vsync, 37 is vblank
-# 76*(192-122+11) = 5244    192 display scanlines but viewsize is 122 and we waste about 11 lines XXX on other things
-# 10564                     total number of cycles we have to work with  XXX waiting on nearly expired timers eats some of this up
-
-my $available_cycles = 10564;
+# 76*(30+37+3) +            76 cycles per line, 30 lines are overscan, 3 are vsync, 37 are vblank
+# 76*(192-viewsize+11) =    192 display scanlines but viewsize is 122 and we waste about 11 lines XXX on other things (rendering enemies)
+# ~10564                    total number of cycles we have to work with  XXX waiting on nearly expired timers eats some of this up -- compute that
 
 use strict;
 use warnings;
@@ -25,6 +23,12 @@ use PadWalker;
 
 my $symbols = symbols::symbols('newbies.lst');
 
+my $viewsize = $symbols->viewsize or die;
+
+my $available_cycles = 76 * ( 30 + 37 + 3 ) + 76 * ( 192 - $viewsize + 11 );
+diag "available_cycles = $available_cycles";
+
+
 my $cpu = Acme::6502->new();
 $cpu->load_rom( 'newbies.bin', 0xf000 );
 
@@ -32,10 +36,12 @@ my $cycles_per_opcode;
 open my $fh, '6502_formatted.txt' or die $!;
 while( my $line = readline $fh ) {
     chomp $line;
-    my @line = split m/ /, $line;
+    my @line = split m/ /, $line, 3;
     @line >= 2 or die $line;
-    # warn "$line[0] = $line[1]\n";
-    $cycles_per_opcode->[ hex($line[0]) ] = $line[1];
+    my $op = hex($line[0]);
+    $cycles_per_opcode->[ $op ] = $line[1];
+    $cycles_per_opcode->[ $op ] += 1 if defined $line[2] and $line[2] =~ m/\+1/;  # assume the worst case, that we're crossing page boundaries or taking branches
+    $cycles_per_opcode->[ $op ] += 1 if defined $line[2] and $line[2] =~ m/\+2/;  # assume the worst case
 }
 
 sub run_cpu {
