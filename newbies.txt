@@ -815,3 +815,35 @@ playerdatahi <- enemybird1 or 2... XXX set this up near startofframe0
 
 XXX set a more reasonable enemy color than purple
 
+.... time passes....
+
+XXX 04_runtime.pl needs corrections for how much time it has to work with
+    not all of the cycles during vblank etc are available... TIM64T gets 121 then 40 (with 17 for drawing enemies)
+        121*64 = 7744+2560=10304, but the last one of each don't count... worst run was 8900
+            modify the test to simulate INTIM
+            07_timer.pl and 12_timedrawenemies.pl both already do some stuff with it
+
+INTIM raeds can be cleaned up, and collision, momentum, bird rending done together
+
+is collision testing working?
+    there's a test for it I think so maybe but nothing is hooked up to it
+    oh yeah, collision lets you stand on a platform
+
+
+XXX timer isn't checked often enough, not by a long shot.
+    XXX better strategy might be to hard-code along with the level data how many steps ahead we can safely look, and just never do more than that, then do other chores, then wait on timer.
+scott@fluffy:~/projects/2600/newbies$ perl 07_timer.pl
+# fetching timer with 65 left on it at platnextline curplat=0 deltaz=9 lastline=47
+# fetching timer with 62 left on it at unknown location curplat=0 deltaz=8 lastline=47
+# fetching timer with 61 left on it at platnextline curplat=0 deltaz=8 lastline=46
+# fetching timer with 58 left on it at unknown location curplat=0 deltaz=7 lastline=46
+# fetching timer with 57 left on it at platnextline curplat=0 deltaz=7 lastline=45
+# fetching timer with 54 left on it at unknown location curplat=0 deltaz=6 lastline=45
+# fetching timer with 53 left on it at platnextline curplat=0 deltaz=6 lastline=44
+... and so on.
+# fetching timer with 2 left on it at .plathypot3 curplat=8 deltaz=37 lastline=46
+# fetching timer with 2 left on it at .plot9 curplat=8 deltaz=37 lastline=46
+# fetching timer with 2 left on it at platnextline0b curplat=8 deltaz=37 lastline=46          <--- only works now because it finishes its work with 2(*64) on the clock still.
+
+
+XXX wrapping around the world isn't graceful.  we can't see past the end.  this would be hard to fix.  probably don't want to try.
