@@ -789,6 +789,9 @@ readstick9
 
 
 
+; end macros, start linear code
+
+
 ;
 ; ROM
 ;
@@ -808,12 +811,12 @@ reset
 		; initialize ram to 0
 		lda #0
 		ldx #$80
-reset0  sta $80,x
+reset0  	sta $80,x
 		dex
 		bne reset0
 
 		; hardware
-		sta $281				; all joystick pins for input
+		sta $281		; all joystick pins for input
 
 		; player location on map
 		ldy #2
@@ -821,23 +824,24 @@ reset0  sta $80,x
 		ldy #32
 		sty playery
 
-		; enemy location on map XXX should be random or something
+		; enemy location on map XXX should be random or something... but really, joust has a spawn sequence
 		ldy #10
 		sty playerz+1
 		ldy #60
 		sty playery+1
 
 		; some player setup
-		; burn some cycles until the scan line is at where we want to reset the player to being at (RESP0)
+		; burn some cycles relative start of scanline until the beam is at where we want to reset the player to being at (RESP0)
+		; this is how players are initially absolutely positioned
 		sta WSYNC
 		ldy #7
 reset1
 		dey
 		bne reset1
 
-		lda #$55				; XXXX color of player; this could be moved to be at reset time too
+		lda #$55		; color of player
 		sta COLUP0
-		sta RESP0				; XXXX move this around to be timed so that it positions P0 in the center of the screen; value doesn't matter; it's just a strobe
+		sta RESP0		; XXX move this around to be timed so that it positions P0 in the center of the screen; value doesn't matter; it's just a strobe
 
 
 ;
@@ -931,7 +935,6 @@ enemy
 		lsr					; +2  66 ... XXX this could be skipped
 		lsr					; +2  68 ... XXX this could be skipped
 		tay					; +2  70
-		; lda enemybird1,y			; +4  74
 		lda (playerdata),y			; +5  75
 		sta GRP0				; +3 ->2 (went up to 78 which rolls over 76 to 2; we head into hblank here and start a new scanline)
 		
@@ -1078,6 +1081,7 @@ monster_collisions
 		_momentum
 		; XXX _ai
 
+platlevelclear
 		; zero out the framebuffer
 		ldy #viewsize
 		ldx #$00
@@ -1092,19 +1096,21 @@ platlevelclear2
 
 ; iterate through the platforms ahead of the player and updates the little frame buffer of line widths.
 ; for each platform, it counts down from the end of the platform to the beginning of the platform.
-; if the rendering a line for one part of a platform would leave a gap between it and the previous one, it renders extra lines to fill in that gap.
+; if rendering a line for one part of a platform would leave a gap between it and the previous one, it renders extra lines to fill in that gap.
+; if rendering a line over the last line drawn, skip rendering the line.
+;               ^-- XXX this lastline thing does get cleared between platforms, right?
 ; variables:
-; curplat   -- which platform we're considering drawing or currently drawing (should be a multiple of 4)
+; curplat   -- which platform we're considering drawing or currently drawing (should be a multiple of 4, which is the size of an entry in level0)
 ; platend   -- stores level0[curplat][start] + level0[curplat][length]
 ; deltay    -- how far the player is above/below the currently being drawn platform
 ; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform -- counts down from level0[curplat][end]-playerz to level0[curplat][end]-playerz (which is 0)
 ; using the S register now for curlineoffset
 
-platlevelclear					; clear out all incremental stuff and go to the zeroith platform
+renderplatforms
 		; start over rendering
+		; clear out all incremental stuff and go to the zeroith platform
 
-        ldy #0
-
+		ldy #$00
 		sty deltaz
 		sty curplat
 		dey				; # make lastline $ff
@@ -1141,17 +1147,17 @@ platnext
 
 platfound
 		; a platform was found that ends in front of us; initialize deltay, deltaz and start doing lines from a platform
-		lda #0					; blank out the lastline so we don't try to gapfill to it when we start rendering the next platform
+		lda #0				; blank out the lastline so we don't try to gapfill to it when we start rendering the next platform
 		sta lastline
 		dec lastline ; make it $ff
 		lda level0+1,y			; get platform end
 		sec
 		sbc playerz
-		sta deltaz				; end of the platform minus playerz is deltaz
+		sta deltaz			; end of the platform minus playerz is deltaz
 		lda playery
 		sec
 		sbc level0+2,y			; subtract the 3rd byte, the platform height
-		sta deltay				; deltay is the difference between the player and the platform, signed
+		sta deltay			; deltay is the difference between the player and the platform, signed
 
 ; work backwards from the last visible line using deltaz as the counter
 
@@ -1171,16 +1177,16 @@ platrenderline
 		jmp platnext			; do this if deltay > deltaz
 platrenderline1
 
-		_arctan					; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
+		_arctan				; takes deltaz and deltay; uses tmp1 and tmp2 for scratch; returns an arctangent value in the accumulator from a table which we use as a scanline to draw too
 		tax
-		txs						; using the S register to store our value for curlineoffset
+		txs				; using the S register to store our value for curlineoffset
 
-		_plathypot				; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
+		_plathypot			; reads deltay and deltaz directly, returns the size aka distance of the line in the accumulator
 
-		tay						; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
-		tsx						; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
+		tay				; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
+		tsx				; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
-		lda INTIM				; experimental; still have some roll, and the cycle count for gap feeling seems really good, and the timer is handled immediately after _plotonscreen; okay, this seems to have maybe fixed it; but maybe putting more on the post-plot timer would be a better fix?
+		lda INTIM			; experimental; still have some roll, and the cycle count for gap feeling seems really good, and the timer is handled immediately after _plotonscreen; okay, this seems to have maybe fixed it; but maybe putting more on the post-plot timer would be a better fix?
 		bne preplottimer
 		_vsync
 preplottimer
@@ -1263,7 +1269,7 @@ vblanktimerendalmost
 
 ; takes X of which movable body to do collisions on, which also tells us where to return to
 ; we handle collisions in-line in logic in here XXX change that
-; generally, that means zero'ing out momentum, or maybe making them bounce
+; generally, that means zero'ing out momentum, or maybe making them bounce XXX or other effects
 ; we also still set collision_platform and collision_bits but really just for unit testing at this point
 ; we first loop over all of the movable objects that might collide with something (using X)
 ; then we loop over all of the platforms it might collide with (using Y)
