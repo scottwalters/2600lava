@@ -1399,32 +1399,6 @@ collisions9b
 
 
 ;
-; computedreturn
-;
-
-; XXXX not sure if we're actually going to use this again
-
-;computedreturn
-;		; this stupidity saves one byte of RAM versus JSR/RTS
-;		lda caller
-;		asl
-;		tax
-;		lda returntable,x
-;		sta tmp1
-;		lda returntable+1,x
-;		sta tmp2
-;		jmp (tmp1)
-
-;
-;              return address table
-;
-
-;returntable
-;               dc.w return0, return1, return2
-
-
-
-;
 ;
 ; tables
 ;
