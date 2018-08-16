@@ -161,6 +161,7 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
 ; check INTIM and do _vsync if it is 1 or 0
 ; uses A
+; other calls to _vsync do something similar but branch back for another loop if the timer hasn't expired
 
 		MAC _maybe_vsync
 		lda INTIM
@@ -857,7 +858,7 @@ startofframe
 		; of course, it would be a lot easier to just set a memory pointer or two that data got pulled from every scan line than doing all of this crap.
 		; this buys us clipping.
 
-		lda #17					; 1088 cycles
+		lda #17					; 1088 cycles for drawing the enemy birds, taken from the top of the screen
 		sta TIM64T
 
 		_drawenemies
@@ -885,7 +886,7 @@ startofframe0
 		sta WSYNC				;      0
 
 scanline1
-		lda #%00000001				; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)
+		lda #%00000001				; +2   2 ... reflected playfield (bit 0 is 1); players have priority over playfield (bit 3 is 0)   XXX can this be done once in reset and left?
 		sta CTRLPF				; +3   5
 
 		ldy #viewsize				; +2   7 ... indexes the view table and is our scanline counter
@@ -896,7 +897,6 @@ scanline1
 		lsr					; +2  17
 		sta skyline				; +2  20
 
-; load playerdata here...?  enough time?
 		nop					; +2  22 ... eat up some time
 		nop					; +2  24
 		nop					; +2  26
@@ -976,22 +976,22 @@ renderpump
 ; would it be faster to put scanline back into RAM rather than trying to use S?
 ; control arrives here with exactly 33 cycles on the clock
 
-		ldy scanline		; +3   36 (33 when execution arrives)
+		ldy scanline				; +3   36 (33 when execution arrives)
 
 		; get value for COLUPF ready in Y
-		lax view,y			; +4   40
-		ldy platformcolors,x; +4   44
+		lax view,y				; +4   40
+		ldy platformcolors,x			; +4   44
 
 		; if the looked up color is $00, skip redrawing CULUPF, COLUBK, and the PF registers to instead update the player registers
-		beq enemy			; +2   46
+		beq enemy				; +2   46
 
 		; get the pf*lookup index ready in X
-		and #%00011111		; +2   48
+		and #%00011111				; +2   48
 		tax					; +2   50
 
 		; get value for COLUBK somewhat setup in A
-		lda scanline		; +3   53
-		adc skyline			; +3   56
+		lda scanline				; +3   53
+		adc skyline				; +3   56
 
 		nop					; +2   58 ... XXX 12 bonus cycles
 		nop					; +2   60
@@ -1000,15 +1000,15 @@ renderpump
 		nop					; +2   66
 		nop					; +2   68
 
-		dec scanline		; +5   73
-		bpl platforms		; +3   76 (counting the case where it's taken; this has to come out to exactly 76 cycles)
+		dec scanline				; +5   73
+		bpl platforms				; +3   76 (counting the case where it's taken; this has to come out to exactly 76 cycles)
 
 renderdone
 		; renderdone happens on scanline 145 XXX update this
-		sta WSYNC			; don't start changing colors and pattern data until after we're done drawing the last platform line
+		sta WSYNC				; don't start changing colors and pattern data until after we're done drawing the last platform line
 
 		lda #0
-		sta GRP0			; turn sprite data off just in case it wasn't in the framebuffer instructions
+		sta GRP0				; turn sprite data off just in case it wasn't in the framebuffer instructions
 
 		; black to a back background, and blank out the playfield
 		sta COLUBK
@@ -1251,7 +1251,7 @@ burntime
 vblanktimerendalmost
 		lda	INTIM
 		bne burntime
-		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
+		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
 		bne burntime			; branch always
 
 
