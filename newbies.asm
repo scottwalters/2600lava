@@ -38,7 +38,7 @@ curplat		ds 1		; which platform we are rendering or considering; used as an inde
 deltaz		ds 1		; how far forward the current platform line is from the player
 deltay		ds 1 		; how far above or below the current platform the player is
 lastline	ds 1		; last line rendered to the screen for gap filling
-caller		ds 1		; vblank/vsync progress; used for this during all of the routines expect the display kernel
+caller		ds 1		; vblank/vsync progress; used for this during all of the routines expect the display kernel XXX phasing this out but one thing aliases it
 
 ; aliases
 
@@ -57,10 +57,23 @@ enemydata = curplat		; _drawenemies, how many lines of the enemy do we have left
 
 ; framebuffer
 
-view	ds [ $ff - view ]		; 100 or so lines; from $96 goes to $fa, which leaves $fd and $fe for one level of return for the 6502 call stack
+view	ds [ $ff - view ]		; number of lines of display buffer, which will be about 100 or so; from $96 or so to $ff, the end of memory
 
 viewsize	= [ $ff - view ]
 		ECHO "viewsize: ", [viewsize]d
+
+
+; 192 - 154
+; plus 34 more scanlines for overscan
+; roughly:  n * 76 machine cycles / 64 cycle timer blocks
+
+processinglines = 192 - viewsize + 30		; number of lines (other than 37 vblank and 3 vsync) available for processing
+		ECHO "processinglines: ", [processinglines]d
+
+processingtimer = processinglines * 76 / 64 - 1	; value to use in TIM64T to measure about that much time (rounded down)
+; converts between scanlines (76 cycles) and blocks on the 64 cycle timer
+; not sure why the -1 was needed but that gets it back to 262 scanlines but I don't know if vblank kicks in when it's supposed to or if it's early and cycles need to be trimmed after
+		ECHO "processingtimer: ", [processingtimer]d
 
 ;
 ; constants
@@ -73,11 +86,11 @@ num_bodies	= 2                ;  playerz, monster1z, and so on for other variabl
 ;
 
 flap_y		= $06		; $10 would take 16 frames to send us up one whole unit, if there was no decay
-flap_z1		= $08
+flap_z1		= $08		; forward momentum added when flapping when stick pressed forward, neutral, and pulled back
 flap_z2		= $05
-flap_z3		= $00
+flap_z3		= $fe
 gravity		= $01
-runspeed	= $06
+runspeed	= $0a
 terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 
 ;
@@ -97,79 +110,6 @@ terminal_velocity = $100 - $78		; ie -$78; $ff is -1
 		adc #$01
 .abs1
 		ENDM
-
-;
-; _cleartrigger
-;
-
-; clear out latched joystick button presses
-
-		MAC _cleartrigger
-		lda #%00000000			; bit 7 is joystick button latch enable; bit 2 is vblank enable
-		sta VBLANK
-		lda #%01000000
-		sta VBLANK
-		ENDM
-;
-; vsync/vblank
-;
-
-; when the timer expires, do the next step in the vblank/vsync dance, using 'caller' to decide what the next step is
-; only A is available for us to use
-; code using this macro counts on the Z flag being clear after this runs
-; caller = 0 = still in drawable plus 30 lines of overscan, 1 = 37 lines of vblank, then go to drawing kernel after that
-; this is about 32 bytes long and used in three places
-
-		MAC _vsync
-		sta WSYNC				; do this immediately
-		lda caller
-		beq .vsync1
-
-.vsync0							; caller = 1
-		; and back to drawing the screen
-		; this should happen on scanline 37
-		; turning vblank off happends there
-		jmp startofframe
-
-.vsync1							; caller = 0
-		; 3 scanlines of vsync signal
-		; this should happen on scanline 262, taking us back to scanline 1
-		lda #2
-		; sta WSYNC				; done above/immediately instead; should hopefully roll us over to the start of scanline 260
-		sta VSYNC
-		sta WSYNC				; 261
-		sta WSYNC				; 262
-		lda #0
-		sta VSYNC
-
-		; 37 lines of vblank next
-		; start vblank
-		lda #%01000010				; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
-		sta VBLANK
-
-		lda #40					; adjusting this based on experimenting with stella XXX
-		sta TIM64T
-
-		inc caller				; run .vsync0 next time
-
-		; fall through to continue whereever we were invoked
-		ENDM
-
-;
-; _maybe_vsync
-;
-
-; check INTIM and do _vsync if it is 1 or 0
-; uses A
-; other calls to _vsync do something similar but branch back for another loop if the timer hasn't expired
-
-		MAC _maybe_vsync
-		lda INTIM
-		bne _maybe_vsync9
-		_vsync
-_maybe_vsync9
-		ENDM
-
 
 ;
 ; apply momentum
@@ -352,17 +292,17 @@ readstick0
 		; button
 		lda INPT4
 		bmi readstick8			; branch if button not pressed (bit 7 stays 1 until the trigger is pressed, then it stays 0)
-        ; button down
-		_cleartrigger			; reset the joystick button latch
+        	; button down
+		_cleartrigger
 		; bump playeryspeed
 		lda playeryspeed
 		clc
-		adc #flap_y				; $10 would take 16 frames to send us up one whole unit
+		adc #flap_y			; $10 would take 16 frames to send us up one whole unit
 		bvs readstick1			; don't write it back if it would overflow
 		sta playeryspeed
 readstick1
 		; player is flapping; add more or less forward thrust depending on the stick
-        ; bit 0 = up, which we interpret as meaning to accelerate as much as possible forward
+		; bit 0 = up, which we interpret as meaning to accelerate as much as possible forward
 		txa
 		and #%00010000
 		beq readstick2
@@ -373,7 +313,7 @@ readstick1
 		sta playerzspeed
 		jmp readstick4
 readstick2
-        ; bit 1 = down, which we take to mean to accelerate as little as possible forward
+		; bit 1 = down, which we take to mean to accelerate as little as possible forward
 		txa
 		and #%00100000
 		beq readstick3			; if not pushing down either, then go to readstick3 which handles the neither forward nor backwards case
@@ -397,7 +337,7 @@ readstick4
 readstick8
 		; button not pressed; forward/backwards only apply if we're on a platform XXXX
 		lda playeryspeed
-		bne readstick9			; skip joystick control if the player has any Y speed; this could also have been done with collision_platform but I'm avoiding depending on those and this would be the only dependency.  if we're on a platform, our Y speed got zerod, so use that as a sort of unreliable indicator.
+		bne readstick9			; skip joystick control if the player has any Y speed; this could also have been done with collision_platform but I'm avoiding depending on those and this would be the only dependency.  if we're on a platform, our Y speed got zerod, so use that as a sort of unreliable indicator.  XXX
 		txa
 		and #%00010000			; are we pushing up on the stick?
 		beq readstick8a			; branch to skip if not
@@ -560,6 +500,13 @@ readstick9
 ; it, hold the current color in tmp2
 
 		MAC _plotonscreen
+		jmp .plotonscreen
+
+; springboards-ish
+.plot4
+		jmp .plot9
+.plot5
+		jmp .plot_simple
 
 .plotonscreen
 		cpx lastline			; are we drawing on top of the last line we drew for this platform?
@@ -573,7 +520,6 @@ readstick9
 		ldx tmp1
 
 		lda lastline
-		; bmi .plot_simple		; .plot_simple is out of range; no last line if the highbit is set; use the simple case
 		bmi .plot5			; .plot_simple is out of range; springboard to it; no last line if the highbit is set; use the simple case; out of range now
 
 		cpx lastline
@@ -597,19 +543,14 @@ readstick9
 
 .plot_down2
 		cpx lastline			; +3 31 ... we want to catch it at 1 diff, not equal but we can do that if we pre-inc lastline.  this routine updates lastline anyway.
-		beq .plot8			; +2 33 ... if lastline minus curline is exactly 1 away then our work is done; bail out (well below 64 cycles at this point)
+		bne .plot_down2a
+		jmp .plot8			; too far to beq to
 .plot_down2a
 		dex				; +2 35 ... drawing downwards relative last plot
-		lda	INTIM			; +2  2 ... worst case scenario, we read this as a '1' one cycle before it flips over to 0; in that case, we need to read it again within 64 cycles
-		bne .plot_down1			; +3  5
-		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
-		bne .plot_down1			; loop always
-
-; springboards
-.plot4
-		beq .plot9
-.plot5
-		bmi .plot_simple
+		lda INTIM
+		cmp #4				; XXXX observed 3
+		_vsync                          ; do the next vsync/vblank thing that needs to be done and put more time on the timer, if we're ready to start vsync.
+		jmp .plot_down1
 
 ; drawing upwards
 
@@ -627,15 +568,16 @@ readstick9
 		sta view,x			; draw to the framebuffer
 
 .plot_up2
-		cpx lastline			; #$99
-		beq .plot8			; if lastline minus curline is exactly 1 away then our work is done; bail out
+		cpx lastline
+		bne .plot_up2a
+		jmp .plot8			; if lastline minus curline is exactly 1 away then our work is done; bail out
 
+.plot_up2a
 		inx				; drawing upwards relative last plot
-		; jmp .plot_up1			; always branch; recurse back in
-		lda	INTIM
-		bne .plot_up1
-		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel.  leaves Z=false.
-		bne .plot_up1			; loop always
+		lda INTIM
+		cmp #4
+		_vsync
+		jmp .plot_up1			; always branch; recurse back in
 
 .plot_simple
 		; handle the simple case of not having any gap to fill
@@ -656,6 +598,7 @@ readstick9
 		stx lastline
 .plot9
 		ENDM
+
 
 ;
 ; _drawenemies
@@ -788,6 +731,66 @@ readstick9
 		ENDM
 
 
+; _vsync
+; preserve x and y
+; if we're out of time, either start vblank and add more time to the timer, or else stop rendering
+; caller=0 maens normal and overscan, caller=1 means vblank
+; needs this sequence or something similar before it:	lda INTIM, cmp #2   or just  lda INTIM
+
+		MAC _vsync
+		bpl .vsync2				; didn't go negative so still a little time on the clock
+
+		; out of time
+		lda caller
+		beq .vsync1				; caller = 0 means not yet in vblank
+
+.vsync0							; caller = 1
+		; already in vblank
+		jmp nomoreplatforms
+
+.vsync1							; caller = 0
+		; burn down any time left on the clock
+		lda INTIM
+		bne .vsync1
+
+		; 3 scanlines of vsync signal
+		; this should happen on scanline 262, taking us back to scanline 1
+		lda #2
+		sta WSYNC				; XXX should hopefully roll us over to the start of scanline 259 XXX but check!
+		sta VSYNC
+		sta caller				; note that we're already in vsync; may do this differently XXX
+		sta WSYNC				; 260   XXX not sure about this count
+		sta WSYNC				; 261
+		sta WSYNC				; 262
+		lda #0
+		sta VSYNC
+
+		; start vblank
+		; 37 lines of vblank
+		lda #%01000010			  ; leave the joystick latches (bit 7) on and don't reset them here; we do that elsewhere right after we read them; bit 2 sets VBLANK
+		sta VBLANK
+
+		lda #14				 ; only just a bit more plat rendering before other things; adjusting this based on experimenting with stella XXX
+		sta TIM64T
+		; fall through to continue whereever we were invoked
+
+.vsync2
+		ENDM
+
+
+
+; _cleartrigger
+;
+
+; clear out latched joystick button presses
+
+		MAC _cleartrigger
+		lda #%00000000                  ; bit 7 is joystick button latch enable; bit 2 is vblank enable  XXX set bit 2 depending on whether we're currently running this during vblank
+		sta VBLANK
+		lda #%01000000
+		sta VBLANK
+		ENDM
+
 
 ; end macros, start linear code
 
@@ -850,43 +853,15 @@ reset1
 
 
 startofframe
-		;  ... stella considers this to be the first scanline.  we don't draw anything, yet.
-		; sta WSYNC				; instead done in _vsync; that one should hopefully take us to the start of scanline 37  (first drawable one, but this doesn't draw anything)
-
 		inc tickcounter
-
-		lda #%01000000				; turn VBLANK off near the end of line 37, leaving the joystick latch on
-		sta VBLANK				; ideally, this would be done near the end of the scanline
-
-		; this is terrible, but try to do enemy drawing here.  trying to do it before drawing the platforms has serious problems.  XXX
-		; of course, it would be a lot easier to just set a memory pointer or two that data got pulled from every scan line than doing all of this crap.
-		; this buys us clipping.
-
-		lda #17					; 1088 cycles for drawing the enemy birds, taken from the top of the screen
-		sta TIM64T
-
-		_drawenemies
-
-		; use tmp1, tmp2 as a pointer to sprite data
-		; use one of the two graphics alternately depending on tickcounter
-pickbird
-		lda tickcounter	
-		and #%00001000
-		beq pickbird1
-		lda #<enemybird1			; low byte first
-		jmp pickbird2
-pickbird1
-		lda #<enemybird2
-pickbird2
-		sta playerdata
-		lda #>enemybird1			; both need to be on the same page
-		sta playerdata+1
 
 		; wait for the timer to tick down so we can stay in sync
 		; then wait for sync, then do some setup in the 30 cycles we have before we have to be at the start of 'renderpump'
-startofframe0
-		lda	INTIM
-		bne startofframe0
+
+; startofframe0
+; 		lda	INTIM
+; 		bne startofframe0
+
 		sta WSYNC				;      0
 
 scanline1
@@ -1019,67 +994,26 @@ renderdone
 		sta PF1
 		sta PF2
 
-		sta WSYNC
+
+
+
+
+
+
+; render platforms into buffer
+
+renderplatforms
 
 ; 192 - 154
 ; plus 34 more scanlines for overscan
 ; roughly:  n * 76 machine cycles / 64 cycle timer blocks
 
-		lda #121				; XXX I've been just tweaking this depending on what stella does
+		lda #0
+		sta caller		; controls where we go when we exit platform rendering
+
+		lda #<processingtimer
 		sta TIM64T
 
-		lda #0					; phase 0 in the vblank process
-		sta caller
-
-		; do collisions on movable body 0, the player
-		ldx #0
-		jmp collisions
-collisionsreturn0				; it branches back here after doing collisions with X=0
-		lda #%00000011
-		and collision_bits
-		beq no_player_collisions
-		_cleartrigger
-no_player_collisions
-
-		; do collisions on monsters
-		; depending on that, consider flapping
-		ldx #1					; XXX should loop over 1..num_bodies
-		jmp collisions
-collisionsreturn1				; it branches back here after doing collisions with X>0
-		lda #%00000011
-		and collision_bits
-		bne monster_collisions	; opposite sense of above; we branch if we did collide with something
-		; no collision; if tick_counter is an even modulo of some number and this monster is lower than the player, then flap
-		lda tickcounter			; rate limit monster flapping
-		; and #%00001111			; monster can only flap once every 16 frames
-		; and #%00000011			; monster can only flap once every 4 frames, which is 15 times per second, which is a lot
-		and #%00000111			; monster can only flap once every 8 frames, which is 7.5 times per second
-		bne monster_collisions	; branch if all four or so low bites of tick_counter aren't zero
-		lda playery,x
-		cmp playery
-		bpl monster_collisions
-		; make the enemy bird flap
-		lda playeryspeed,x
-		clc
-		; adc #flap_y             ; $10 would take 16 frames to send us up one whole unit; current at 6
-		adc #10					; XXXX testing... 10 gets them up off the ground pretty well
-		bvs monsterflap1		; don't write it back if it would overflow
-		sta playeryspeed,x
-monsterflap1
-		lda playerzspeed,x
-		; clc					; XXX they can fly forward or backwards perhaps depending on stuff
-		; adc #flap_z2			; z3 is slowest; z1 fastest; z2 middle
-		sec
-		; sbc #flap_z2
-		sbc #10					; XXX testing
-		bvs monsterflap2		; don't write it back if it would overflow our signed playeryspeed
-		sta playerzspeed,x
-monsterflap2
-monster_collisions
-
-		_readstick
-		_momentum
-		; XXX _ai
 
 platlevelclear
 		; zero out the framebuffer
@@ -1106,29 +1040,27 @@ platlevelclear2
 ; deltaz    -- how far the player is from the currently being drawn line of the currently being drawn platform -- counts down from level0[curplat][end]-playerz to level0[curplat][end]-playerz (which is 0)
 ; using the S register now for curlineoffset
 
-renderplatforms
 		; start over rendering
 		; clear out all incremental stuff and go to the zeroith platform
 
 		ldy #$00
 		sty deltaz
 		sty curplat
-		dey				; # make lastline $ff
-		sty lastline
-		; fall through to platnext0
 
-platnext0
-		; is there a current platform?  if not, go busy spin on the timer.  if so, figure out if any of it is still in front of the player.
+platresume
+		; is there a current platform?  if not, jump to nomoreplatforms.
 		; this condition is reset when platlevelclear is called.
-		ldy curplat				; offset into the level0 table
+		lda #$ff
+		sta lastline			; reset tracking on lastline drawn
+		ldy curplat			; offset into the level0 table
 		lda level0,y			; load the first byte, the Z start position, of the current platform
 		bne platnext1			; not 0 yet, so we have a platform to evaluate and possibily render if it proves visible
 
-platnext0vblanktimer
-		jmp vblanktimerendalmost	; no more platforms; just burn time until the timer expires
+		; first byte is 0, so no more platforms
+		jmp nomoreplatforms
 
 platnext1
-		; skip to the next platform again unless one ends somewhere in front of us
+		; skip to the next platform again unless this one ends somewhere in front of us
 		lda level0+1,y			; get the end point of the platform, since the end is the interesting part to test for to see if we can see any of this platform
 		cmp playerz				; compare to where the player is
 		beq platnext			; skip rendering this one if the end is exactly where the player is at; only render stuff forward of us; mostly, we don't want to fall into platrenderline from here starting with a 0 deltaz
@@ -1143,7 +1075,7 @@ platnext
 		iny
 		iny
 		sty curplat
-		jmp platnext0
+		jmp platresume
 
 platfound
 		; a platform was found that ends in front of us; initialize deltay, deltaz and start doing lines from a platform
@@ -1186,33 +1118,19 @@ platrenderline1
 		tay				; Y gets the distance, fresh back from plathypot, which we use to figure out which size of line to draw
 		tsx				; X gets the scanline to draw at; value for curlineoffset is hidden in the S register
 
-		lda INTIM			; experimental; still have some roll, and the cycle count for gap feeling seems really good, and the timer is handled immediately after _plotonscreen; okay, this seems to have maybe fixed it; but maybe putting more on the post-plot timer would be a better fix?
-		bne preplottimer
-		_vsync
-preplottimer
-
-
 		_plotonscreen			; Y gets the distance away/platform line width, X gets the scanline to draw at
 
 platnextline
+		; advance to the next platform line and go to platnext or platrenderline as necessary
 
 		; do we have enough time left on the clock to do another line of the platform?
 		; have to keep fudging this.
+
 		lda INTIM
-		beq platnextline0c		; timer expired?  branch to immediately deal with it
-platnextline0a
 		cmp #6
-		bpl platnextline0		; branch if INTIM >= 6; we have time to find the next platform line; just bumped this to 6 after catching 2.vsync1 continuing on 5 and then next loop, being negative
-platnextline0b					; otherwise, burn time until the timer runs out, handle the video control, and continue
-		lda	INTIM
-		bne platnextline0b
-platnextline0c
-		_vsync					; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel
-platnextline0
+		_vsync
 
-		; advance to the next platform line and go to platnext or platrenderline as necessary
-
-		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
+		dec deltaz				; deltaz goes down to zero; doing this after the timer test instead of before probably means that when we come back, we redo the same line that we just did, but the alternative is mindlessly jumping into doing the line when we come back without first doing the (below) check to see if we should be doing it.
 
 		; deltaz = 0 is okay; stop on deltaz < 0
 		bmi platnextline3		; on deltaz < 1, branch to platnext to start in on the next platform; we've walked backwards past the players position for this platform
@@ -1239,30 +1157,129 @@ platnextline3
 platnextline2
 		jmp platrenderline		; if deltaz is larger than level0,y - playerz - 1, then go on to render the next line with our newly dec'd deltaz; too far for a relative branch
 
-;
-;
-; subroutines
-;
-;
 
-;
-; vblanktimerendalmost aka burntime
-;
+nomoreplatforms
 
-; despite the name, execution is sent here when we've finished rendering all of the platforms.
-; branching to startofframe is now handled in the _vsync macro used in various places.
-; XXX do other rendering here we want to do beyond rendering platforms.
+nomoreplatforms0
+		; should be in vblank by the time we get out of rendering stuff but may not be
+		; before doing anything else, deal with the situation where we haven't entered vblank yet
 
-burntime
-vblanktimerendalmost
+		lda caller
+		bne nomoreplatforms1
+		; not yet in vblank
+		lda #$ff			; force minus condition so that _vsync starts burning down the clock
+		_vsync
+		; okay, should be in vblank now
+		
+nomoreplatforms1				; already/now in vblank; burn down any time left on the platform timer before setting a new timer
+		lda INTIM
+		bpl nomoreplatforms1
+
+
+nomoreplatforms2
+		sta WSYNC
+		; time for doing other things; adjusting this based on experimenting with stella XXX
+		lda #26
+		sta TIM64T
+
+
+drawenemies
+		_drawenemies
+
+
+
+; collisions
+
+		; do collisions on movable body 0, the player
+		ldx #0
+		jmp collisions
+
+
+
+
+
+
+collisionsreturn0				; branches here after doing collisions with X=0 (the player)
+		lda #%00000011
+		and collision_bits
+		beq no_player_collisions
+		; clear latched trigger if the player collided with something; collision keeps them from flapping
+		_cleartrigger
+		; XXX
+no_player_collisions
+
+		; do collisions on monsters
+		; depending on that, consider flapping
+		ldx #1					; XXX should loop over 1..num_bodies
+		jmp collisions
+collisionsreturn1				; branches here after doing collisions with X>0
+		lda #%00000011
+		and collision_bits
+		bne monster_collisions	; opposite sense of above; we branch if we did collide with something
+		; no collision; if tick_counter is an even modulo of some number and this monster is lower than the player, then flap
+		lda tickcounter			; rate limit monster flapping
+		; and #%00001111			; monster can only flap once every 16 frames
+		; and #%00000011			; monster can only flap once every 4 frames, which is 15 times per second, which is a lot
+		and #%00000111			; monster can only flap once every 8 frames, which is 7.5 times per second
+		bne monster_collisions	; branch if all four or so low bites of tick_counter aren't zero
+		lda playery,x
+		cmp playery
+		bpl monster_collisions
+		; make the enemy bird flap
+		lda playeryspeed,x
+		clc
+		; adc #flap_y             ; $10 would take 16 frames to send us up one whole unit; current at 6
+		adc #10					; XXXX testing... 10 gets them up off the ground pretty well
+		bvs monsterflap1		; don't write it back if it would overflow
+		sta playeryspeed,x
+monsterflap1
+		lda playerzspeed,x
+		; clc					; XXX they can fly forward or backwards perhaps depending on stuff
+		; adc #flap_z2			; z3 is slowest; z1 fastest; z2 middle
+		sec
+		; sbc #flap_z2
+		sbc #10					; XXX testing
+		bvs monsterflap2		; don't write it back if it would overflow our signed playeryspeed
+		sta playerzspeed,x
+monsterflap2
+monster_collisions
+
+		_readstick
+		_momentum
+		; XXX _ai
+
+pickbird
+		; use tmp1, tmp2 as a pointer to sprite data
+		; use one of the two graphics alternately depending on tickcounter
+		lda tickcounter	
+		and #%00001000
+		beq pickbird1
+		lda #<enemybird1			; low byte first
+		jmp pickbird2
+pickbird1
+		lda #<enemybird2
+pickbird2
+		sta playerdata
+		lda #>enemybird1			; both need to be on the same page
+		sta playerdata+1
+
+
+vblankburntimer
+		; XXXXXXX test to make sure the timer hasn't gone negative
 		lda	INTIM
-		bne burntime
-		_vsync				; do the next vsync/vblank thing that needs to be done and then put more time on the timer, or else jump to the start of the render kernel; returns with the Z flag clear
-		bne burntime			; branch always
+		bpl vblankburntimer
+
+endofvblank
+
+		lda #%01000000			; bit 7 is joystick button latch enable; leave it as it is reset during joystick read; bit 2 is vblank enable, so this disables vblank
+		sta VBLANK			; button detection/processing happens during vblank
+
+		jmp startofframe
 
 
 ;
 ; collisions
+; subroutine XXX
 ;
 
 ; detect collisions
@@ -1368,14 +1385,6 @@ collisions4
 		; XXX test to see if we're colliding with an enemy bird
 		jmp collisions8
 
-; collisions7
-; 		; control is sent here when we've run in to something (but not when we've landed on something)
-; 		cpx #0
-; 		bne collisions7a		; don't reset the joystick button latch when monsters collide with things, only when the player does
-; 		_cleartrigger			; reset the joystick button latch to keep the player from flapping
-; collisions7a
-; 		; fall through to collisions8
-
 collisions8
 		; try another platform?
 		iny
@@ -1389,8 +1398,13 @@ collisions9
 ;		dex						; if there's a next movable body to do collisions on, do it
 ;		bmi collisions9a		; branch to exit if X < 0
 ;		jmp collisions0			; else go back for another pass on the next movable body
+
+; XXX this is goofy... just branch back with x intact and let the caller decide how to handle it
 collisions9a
 		cpx #0
+
+
+
 		bne collisions9b
 		jmp collisionsreturn0	; return player logic handling
 collisions9b
@@ -1860,7 +1874,7 @@ level0
 		dc.b 20, 25, $14, $60	; purple
 		dc.b 30, 40, $18, $c0	; green
 		dc.b 35, 50, $24, $40	; red
-		dc.b 40, 60, $10, $60	; purple again ... XXX and this makes the screen jump... too much gap filling I think
+		dc.b 40, 60, $10, $60	; purple again
 		dc.b 0, 0, 0, 0 		;       end
 
 ;
