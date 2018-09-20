@@ -2,16 +2,12 @@
 
 # do some basic checks on how long it takes to render things
 
-# 76*(30+37+3) +            76 cycles per line, 30 lines are overscan, 3 are vsync, 37 are vblank
-# 76*(192-viewsize+11) =    192 display scanlines but viewsize is 122 and we waste about 11 lines XXX on other things (rendering enemies)
-# ~10564                    total number of cycles we have to work with  XXX waiting on nearly expired timers eats some of this up -- compute that
-
 use strict;
 use warnings;
 
 use Test::More;
-
 use Acme::6502;
+use Tie::Scalar;
 
 use lib '.';
 use symbols;
@@ -25,9 +21,15 @@ my $symbols = symbols::symbols('newbies.lst');
 
 my $viewsize = $symbols->viewsize or die;
 
-my $available_cycles = 76 * ( 30 + 37 + 3 ) + 76 * ( 192 - $viewsize + 11 );
-diag "available_cycles = $available_cycles";
+# 30 lines are overscan
+# get some more during vblank but because other stuff happens in vblank, I'm not sure how much
+# have to deduct at least 64 cycles (1 tick of the TIM64T) for every time we test INTIM since when we catch the timer at 0 can vary by thoes 64 cycles
+# observing vblankrendermore occupring on scanline 11 or 12, and vblankdonerendering/vblankburntimer on 33, so that's 21 lines of additional rendering
 
+my $available_cycles = 76 * ( 30 + 192 - $viewsize ) + 76 * 14 - 64 * 2;     # XXX not automatically extracting the vblank timer value
+
+my $cycles = 0;        # absolute number of elapsed cycles since the CPU was started
+my $timer_cycles = 0;  # number of cycles in $cycles when the timer was last set
 
 my $cpu = Acme::6502->new();
 $cpu->load_rom( 'newbies.bin', 0xf000 );
@@ -41,14 +43,13 @@ while( my $line = readline $fh ) {
     my $op = hex($line[0]);
     $cycles_per_opcode->[ $op ] = $line[1];
     $cycles_per_opcode->[ $op ] += 1 if defined $line[2] and $line[2] =~ m/\+1/;  # assume the worst case, that we're crossing page boundaries or taking branches
-    $cycles_per_opcode->[ $op ] += 1 if defined $line[2] and $line[2] =~ m/\+2/;  # assume the worst case
+    $cycles_per_opcode->[ $op ] += 2 if defined $line[2] and $line[2] =~ m/\+2/;  # assume the worst case
 }
 
 sub run_cpu {
 
     my @stop_symbols = @_;
 
-    my $cycles = 0;
     my $plot_same_line_count = 0;
     my $lines_of_gap_filled = 0;
     my $times_plot_simple_is_called = 0;
@@ -85,6 +86,35 @@ sub run_cpu {
 }
 
 #
+# register implementations
+#
+
+package Register::TIM64T {
+    # start a new timer
+    use base 'Tie::StdScalar';
+    sub TIESCALAR { my $class = shift; $_[0] ||= 0; return bless \$_[0] => $class; }
+    sub STORE {
+        $timer_cycles = $cycles;
+        Test::More::diag "setting TIM64T for $_[1] which gives @{[ 64 * $_[1] ]} cycles\n";
+        ${$_[0]} = $_[1];
+    }
+};
+tie $cpu->{mem}->[ $symbols->TIM64T || die ], 'Register::TIM64T';
+
+package Register::INTIM {
+    # read the timer
+    use base 'Tie::StdScalar';
+    sub TIESCALAR { my $class = shift; $_[0] ||= 0; return bless \$_[0] => $class; }
+    sub FETCH {
+         my $ret = $cpu->{mem}->[ $symbols->TIM64T ] - int( ( $cycles - $timer_cycles ) / 64 );
+         Test::More::diag "fetching timer with $ret left on it at " . $symbols->name_that_location( $cpu->get_pc );
+         $ret;
+    }
+};
+tie $cpu->{mem}->[ $symbols->INTIM || die ], 'Register::INTIM';
+
+
+#
 # check how long it takes to render different perspectives
 #
 
@@ -102,98 +132,63 @@ for my $sym (
     $cpu->write_8( $level0++, $sym );
 }
 
-$cpu->write_8( $symbols->INTIM, 76 );
-
-my $cycles;
+diag "processingtimer = " . $symbols->processingtimer;
+$cpu->write_8( $symbols->INTIM, $symbols->processingtimer );
 
 #
 # tests
 #
 
-diag "supposedly, there are 5320 machine cycles total available during vblank and overscan";
+sub do_a_test {
 
-# here's a troublesome one:
+    $cycles = 0;
 
-$cpu->set_pc( $symbols->platlevelclear );
+    $cpu->write_8( $symbols->playerz, 0x00 );
+    $cpu->write_8( $symbols->playery, 0x20 );
+
+    diag "calling renderplatforms:";
+    $cpu->set_pc( $symbols->renderplatforms );
+    run_cpu( $symbols->nomoreplatforms );
+    ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";  # apparently does return signed values
+    diag "done in $cycles cycles";
+
+    ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
+
+}
+
+# troublesome one
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x20 );
- 
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
+do_a_test();
 
-diag "ran in $cycles cycles"; # 10744
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-# and another troublesome one:
-
-$cpu->set_pc( $symbols->platlevelclear );
+# troublesome one
 $cpu->write_8( $symbols->playerz, 0x02 );
 $cpu->write_8( $symbols->playery, 0x1d );
+do_a_test();
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-
-# and a made up one
-
-$cpu->set_pc( $symbols->platlevelclear );
+# troublesome one
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x10 );
+do_a_test();
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-
 # starting view (looking out over a platform, with $39 = 57 bits of gap filled)
-
-$cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x02 );
 $cpu->write_8( $symbols->playery, 0x20 );
+do_a_test();
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-
 # a view with only $0f gaps filled
-
-$cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x02 );
 $cpu->write_8( $symbols->playery, 0x18 );
- 
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
+do_a_test();
 
 # and another troublesome one:
-
-$cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x03 );
 $cpu->write_8( $symbols->playery, 0x1f );
+do_a_test();
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-
 # and another troublesome one:
-
-$cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x1d );
+do_a_test();
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost );
-
-diag "ran in $cycles cycles";
-ok $cycles < $available_cycles, "finishes in less than $available_cycles cycles";
-
-
-
 done_testing();

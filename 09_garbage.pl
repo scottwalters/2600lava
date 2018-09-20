@@ -67,7 +67,7 @@ $cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x20 );
  
-run_cpu( $symbols->vblanktimerendalmost );
+run_cpu( $symbols->nomoreplatforms);
 
 check_lines_drawn();
 
@@ -77,7 +77,7 @@ $cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0xaa );
 $cpu->write_8( $symbols->playery, 0x00 );
  
-run_cpu( $symbols->vblanktimerendalmost );
+run_cpu( $symbols->nomoreplatforms);
 
 check_lines_drawn();
 

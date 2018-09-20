@@ -57,6 +57,8 @@ sub name_that_location {
 # init
 #
 
+# platform start point in the level, platform end point, height of the platform, color (3 bits only, so only even numbers, and %000 is reserved)
+
 my $level0 = $symbols->level0 or die;
 for my $sym (
         1, 11, 0x1e,  0xe0,          # 0 (0)

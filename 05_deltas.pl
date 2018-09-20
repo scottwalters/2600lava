@@ -93,7 +93,7 @@ $cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x20 );
  
-$cycles = run_cpu( $symbols->vblanktimerendalmost, sub {
+$cycles = run_cpu( $symbols->nomoreplatforms, sub {
     my ($pc, $inst, $a, $x, $y, $s, $p) = @_;
     my $deltay = $cpu->read_8( $symbols->deltay );
     my $deltaz = $cpu->read_8( $symbols->deltaz );

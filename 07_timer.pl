@@ -127,22 +127,20 @@ for my $sym (
 # make sure that it doesn't run out of time, as set up
 #
 
-$cpu->write_8( $symbols->TIM64T, 76 );
-
-diag "code is checking timer against this constant: " . $cpu->read_8( $symbols->platnextline0a+1 );
+$cpu->write_8( $symbols->TIM64T, 76 ); # XXX use processingtimer now that it exists
 
 $cpu->set_pc( $symbols->platlevelclear );
 $cpu->write_8( $symbols->playerz, 0x00 );
 $cpu->write_8( $symbols->playery, 0x1F );
 
-run_cpu( $symbols->vblanktimerendalmost, $symbols->startofframe );
+run_cpu( $symbols->nomoreplatforms );
 
 diag "stopped at symbol " .  $symbols->name_that_location( $cpu->get_pc );
 ok ! $ran_out_of_time, "didn't run out of time";
-ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'vblanktimerendalmost', 'vblanktimerendalmost1', 'startofframe'), "did stop on the 'vblanktimerendalmost' label (or something close)";
+ok grep( $_ eq $symbols->name_that_location( $cpu->get_pc ), 'nomoreplatforms' ), "did stop on the 'nomoreplatforms' label";
 
 diag "ran in $cycles cycles";
-ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";
+ok $cpu->read_8( $symbols->INTIM ) >= 0, "timer didn't go negative";  # apparently does return signed values
 
 #
 # test other values to try to mess it up

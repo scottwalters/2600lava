@@ -94,29 +94,29 @@ sub name_that_location {
 
 $cpu->set_pc( $symbols->platnextline );
 $cpu->write_8( $symbols->deltaz, 22 );           # deltaz gets dec'd before the logic runs, so this really compares a deltaz of 21; 21 > ( 20 - 0 ); render this line
-run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerendalmost );
+run_cpu( $symbols->platrenderline, $symbols->platnext );
 # diag "A with deltaz of 21: " . $cpu->get_a; # meaningless; at platrenderline, A gets loaded from deltay, so this is always 2
 is name_that_location( $cpu->get_pc ), 'platrenderline'; # less fragile than:  is $cpu->get_pc, $symbols->platrenderline + 2;
 
 $cpu->set_pc( $symbols->platnextline );
 $cpu->write_8( $symbols->deltaz, 21 );           # deltaz gets dec'd to 20, but 20 should still be rendered
-run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerendalmost );
+run_cpu( $symbols->platrenderline, $symbols->platnext );
 # diag "A with a deltaz of 20: " . $cpu->get_a;
 is name_that_location( $cpu->get_pc ), 'platrenderline';
 
 $cpu->set_pc( $symbols->platnextline );
 $cpu->write_8( $symbols->deltaz, 20 );
-run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerendalmost );
+run_cpu( $symbols->platrenderline, $symbols->platnext );
 is name_that_location( $cpu->get_pc ), 'platnext';
 
 $cpu->set_pc( $symbols->platnextline );
 $cpu->write_8( $symbols->deltaz, 19 );
-run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerendalmost );
+run_cpu( $symbols->platrenderline, $symbols->platnext );
 is name_that_location( $cpu->get_pc ), 'platnext';
 
 $cpu->set_pc( $symbols->platnextline );
 $cpu->write_8( $symbols->deltaz, 18 );
-run_cpu( $symbols->platrenderline, $symbols->platnext, $symbols->vblanktimerendalmost );
+run_cpu( $symbols->platrenderline, $symbols->platnext );
 is name_that_location( $cpu->get_pc ), 'platnext';
 
 done_testing();

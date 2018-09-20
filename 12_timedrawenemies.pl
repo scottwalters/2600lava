@@ -119,8 +119,7 @@ $cpu->write_8( $symbols->playery, 0x14+1 );
 $cpu->write_8( $symbols->monster1z, 39 );      # same platform, a little further down; he should be straight in front of us
 $cpu->write_8( $symbols->monster1y, 0x14+1 );
 
-# $cpu->set_pc($symbols->{'.drawenemies'});
-$cpu->set_pc( $symbols->startofframe );     # _drawenemies happens in there (currently) after TIM64T is set
+$cpu->set_pc( $symbols->drawenemies);
 
 run_cpu( $symbols->{'.drawenemies8'}, );
 
